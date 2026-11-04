@@ -238,6 +238,7 @@ body.clean .ractions, body.clean .rhint { display: none; }
 .voice-btn[aria-pressed="true"] { color: var(--scan); border-color: var(--scan); }
 .voice-btn[aria-pressed="true"] i { background: var(--bad); animation: rec-blink 1.4s ease-in-out infinite; }
 @keyframes rec-blink { 50% { opacity: .3; } }
+.names-btn[aria-pressed="true"] i { background: var(--scan); animation: none; }
 .voice-heard { margin: -2px 4px 0; font-family: var(--f-mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .voice-heard.ok { color: var(--ok); }
 .voice-heard.bad { color: var(--bad); white-space: normal; line-height: 1.45; }
@@ -425,6 +426,7 @@ body.clean #cleanExit { display: inline-block; opacity: .55; }
       <div class="vc-head">
         <h3>View</h3>
         <div class="vc-head-actions">
+          <button class="voice-btn names-btn" id="namesBtn" type="button" aria-pressed="true" title="Names of oceans, seas, lakes and rivers on the map (L)"><i></i>Names</button>
           <button class="voice-btn" id="voiceBtn" type="button" aria-pressed="false" title="Voice commands (V). Say a place, like “Caribbean”, “Japan” or “Europe”, or “globe” / “map”."><i></i>Voice</button>
           <button class="btn close-sheet" id="closeView" type="button">Done</button>
         </div>

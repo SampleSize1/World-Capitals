@@ -5,6 +5,7 @@
 //   mkdir /tmp/cw && cd /tmp/cw && npm i topojson-server@3 topojson-simplify@3 topojson-client@3 polylabel@1
 //   curl -LO https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_lakes.geojson
 //   curl -LO https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_rivers_lake_centerlines.geojson
+//   curl -LO https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_geography_marine_polys.geojson
 //   node /path/to/website/scripts/build-capital-atlas-water.mjs . /path/to/website/public/tools/capital-atlas/data
 //
 // Keeps the big lakes and major rivers, plus smaller ones that are worth knowing for a capital
@@ -13,7 +14,8 @@
 //   mz = zoom it appears at, ml = zoom its label appears at (Natural Earth's web-map zoom levels)
 //   r  = size class, 0 = biggest (Natural Earth's scalerank)
 //   lp = where to put the label: one point inside a lake, a few points along a river
-// Two files: water-low (world and continents) and water-high (zoomed in).
+// Two files: water-low (world and continents) and water-high (zoomed in), plus seas.json (names of
+// oceans and seas, see the end of this file).
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 
@@ -167,3 +169,55 @@ for (const l of [{ name: 'low', keep: 0.12, q: 1e5 }, { name: 'high', keep: 0.6,
 	console.log(`${file}: ${pts} points, ${(fs.statSync(file).size / 1e6).toFixed(2)} MB`);
 }
 console.log(`${lakes.length} lakes (${lakes.filter((f) => f.properties.n).length} labelled), ${rivers.length} river pieces`);
+
+/* ---------- seas and oceans: names only ---------- */
+// From Natural Earth's 1:50m marine areas (ne_50m_geography_marine_polys.geojson). The sea itself is
+// already drawn, so this keeps just each name and some spots to put it (k = ocean / sea / gulf...).
+// Oceans and the big seas get a spread of spots, so a label can show wherever you're looking.
+const pointInRings = (x, y, rings) => {
+	let inside = false;
+	for (const ring of rings)
+		for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+			const a = ring[i], b = ring[j];
+			if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside;
+		}
+	return inside;
+};
+const edgeDistance = (x, y, rings) => {
+	let best = Infinity;
+	for (const ring of rings)
+		for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+			const a = ring[j], b = ring[i], dx = b[0] - a[0], dy = b[1] - a[1], len = dx * dx + dy * dy;
+			const t = len ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / len)) : 0;
+			best = Math.min(best, Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy)));
+		}
+	return best;
+};
+const seas = new Map(); // name -> { n, k, r, ml, lp }
+for (const f of read('ne_50m_geography_marine_polys.geojson').features) {
+	const p = f.properties, n = (p.name_en || p.name || '').trim();
+	if (!n || !f.geometry || p.featurecla === 'reef') continue;
+	const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+	const pts = [];
+	for (const poly of polys) {
+		const best = polylabel(poly, 0.05);
+		if (best.distance <= 0) continue;
+		pts.push([round(best[0]), round(best[1])]);
+		// a grid of spots well inside the bigger areas
+		const step = p.featurecla === 'ocean' ? 12 : p.scalerank <= 1 ? 4 : 0;
+		if (!step) continue;
+		const xs = poly[0].map((q) => q[0]), ys = poly[0].map((q) => q[1]);
+		const minD = Math.min(p.featurecla === 'ocean' ? 4 : 1, best.distance * 0.5);
+		for (let x = Math.ceil(Math.min(...xs) / step) * step; x <= Math.max(...xs); x += step)
+			for (let y = Math.ceil(Math.min(...ys) / step) * step; y <= Math.max(...ys); y += step)
+				if (Math.abs(y) < 72 && pointInRings(x, y, poly) && edgeDistance(x, y, poly) >= minD) pts.push([x, y]);
+	}
+	if (!pts.length) continue;
+	const s = seas.get(n) || { n, k: p.featurecla, r: p.scalerank, ml: p.min_label, lp: [] };
+	s.r = Math.min(s.r, p.scalerank);
+	s.ml = Math.min(s.ml, p.min_label);
+	s.lp.push(...pts);
+	seas.set(n, s);
+}
+fs.writeFileSync(`${outDir}/seas.json`, JSON.stringify([...seas.values()]));
+console.log(`${outDir}/seas.json: ${seas.size} seas and oceans, ${(fs.statSync(`${outDir}/seas.json`).size / 1e3).toFixed(0)} KB`);

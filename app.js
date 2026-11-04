@@ -109,6 +109,7 @@ const state = {
 	view: oneOf(store.get('view', 'globe'), ['globe', 'map'], 'globe'),
 	level: oneOf(store.get('level', 'easy'), ['easy', 'hard'], 'easy'),
 	clean: false,
+	names: store.get('waterNames', true) !== false, // names of oceans, seas, lakes and rivers
 	zoomArea: null, // the zoom chip the view was last set to (cleared by moving the map by hand)
 };
 
@@ -420,6 +421,7 @@ const COL = {
 	river: '#3f86b0',
 	label: '#a9dcf3',
 	labelHalo: 'rgba(8, 15, 21, 0.82)',
+	oceanLabel: 'rgba(169, 220, 243, 0.62)',
 };
 function sizeCanvases() {
 	dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -557,6 +559,16 @@ function useWater(t) {
 	};
 	return { lakes: feature(t, t.objects.lakes).features.map(prep), rivers: feature(t, t.objects.rivers).features.map(prep) };
 }
+// seas and oceans: just names and places to put them (data/seas.json), biggest first
+let SEAS = null;
+function loadSeas() {
+	return fetch('data/seas.json')
+		.then((r) => r.json())
+		.then((list) => {
+			SEAS = list.sort((a, b) => a.r - b.r);
+			invalidate();
+		});
+}
 function loadWater(name) {
 	return fetch(`data/water-${name}.json`)
 		.then((r) => r.json())
@@ -631,7 +643,7 @@ function drawWaterLabels(p) {
 	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 	ctx.clearRect(0, 0, layout.w, layout.h);
 	const w = waterSet(p), z = webZoom(p);
-	if (!w || moving || z < LABEL_MIN_ZOOM) return;
+	if (!w || moving || !state.names) return;
 	if (!labelFont) labelFont = getComputedStyle(document.body).fontFamily;
 	const f = free();
 	const taken = [];
@@ -646,8 +658,9 @@ function drawWaterLabels(p) {
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 	ctx.lineJoin = 'round';
-	const place = (text, points, size) => {
-		ctx.font = `italic 500 ${size}px ${labelFont}`;
+	const place = (text, points, size, ocean) => {
+		ctx.font = `italic ${ocean ? 600 : 500} ${size}px ${labelFont}`;
+		if ('letterSpacing' in ctx) ctx.letterSpacing = ocean ? '2px' : '0px';
 		const half = ctx.measureText(text).width / 2 + 2, h = size / 2 + 2;
 		for (const ll of points) {
 			const pt = projectPoint(p, ll);
@@ -658,13 +671,25 @@ function drawWaterLabels(p) {
 			ctx.lineWidth = 3;
 			ctx.strokeStyle = COL.labelHalo;
 			ctx.strokeText(text, pt[0], pt[1]);
-			ctx.fillStyle = COL.label;
+			ctx.fillStyle = ocean ? COL.oceanLabel : COL.label;
 			ctx.fillText(text, pt[0], pt[1]);
 			return true;
 		}
 		return false;
 	};
 	let n = 0;
+	// oceans and seas first (they sit in open water): the spot nearest the middle of the view that fits
+	if (SEAS) {
+		const ctr = [cam.lon, cam.lat];
+		for (const s of SEAS) {
+			const ocean = s.k === 'ocean';
+			if (ocean ? z < 1 : z < s.ml - 0.2) continue;
+			const pts = s.lp.slice().sort((a, b) => geoDistance(a, ctr) - geoDistance(b, ctr));
+			if (n < 80 && place(ocean ? s.n.toUpperCase() : s.n, pts, ocean ? 13 : s.r <= 1 ? 12 : 11, ocean)) n++;
+		}
+		if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+	}
+	if (z < LABEL_MIN_ZOOM) return; // lakes and rivers: not on the whole-world view
 	const lakes = visibleWater(w.lakes, p, z, LAKE_LEAD)
 		.filter((l) => l.properties.n && l.properties.ml <= z + RIVER_LEAD)
 		.sort((a, b) => a.properties.r - b.properties.r || b.area - a.area);
@@ -1597,7 +1622,7 @@ function renderSegs() {
 	$('searchBox').hidden = state.mode !== 'study';
 	renderDock();
 	$('keysHint').innerHTML =
-		'<kbd>←</kbd><kbd>→</kbd> previous / next · <kbd>1</kbd>–<kbd>0</kbd> zoom · <kbd>+</kbd><kbd>−</kbd> zoom in / out · <kbd>Esc</kbd> back to the region · <kbd>G</kbd> globe / flat map · <kbd>V</kbd> voice · <kbd>C</kbd> clean view';
+		'<kbd>←</kbd><kbd>→</kbd> previous / next · <kbd>1</kbd>–<kbd>0</kbd> zoom · <kbd>+</kbd><kbd>−</kbd> zoom in / out · <kbd>Esc</kbd> back to the region · <kbd>G</kbd> globe / flat map · <kbd>V</kbd> voice · <kbd>L</kbd> water names · <kbd>C</kbd> clean view';
 }
 const LEVEL_HINT = {
 	click: {
@@ -1846,6 +1871,7 @@ document.addEventListener('keydown', (e) => {
 	else if (e.key === 'v' || e.key === 'V') setVoice(!voice.on);
 	else if (e.key === 'c' || e.key === 'C') setClean(!state.clean);
 	else if (e.key === 'r' || e.key === 'R') frameRegion();
+	else if (e.key === 'l' || e.key === 'L') setNames(!state.names, true);
 	else return;
 	e.preventDefault();
 });
@@ -2086,6 +2112,16 @@ function voiceDo(cmd, text) {
 	if (state.clean || narrow()) toast(what);
 }
 $('voiceBtn').addEventListener('click', () => setVoice(!voice.on));
+// names of oceans, seas, lakes and rivers on the map: on/off (L)
+function setNames(on, announce) {
+	state.names = on;
+	store.set('waterNames', on);
+	$('namesBtn').setAttribute('aria-pressed', String(on));
+	invalidate();
+	if (announce) toast(on ? 'Water names on.' : 'Water names off.');
+}
+$('namesBtn').setAttribute('aria-pressed', String(state.names));
+$('namesBtn').addEventListener('click', () => setNames(!state.names));
 document.addEventListener('visibilitychange', () => {
 	if (!document.hidden && voice.on && !voice.rec) voiceStart();
 });
@@ -2154,6 +2190,7 @@ async function boot() {
 	$('loading').hidden = true;
 	startSession();
 	loadWater('low').catch(() => {});
+	loadSeas().catch(() => {});
 	// more detail in the background
 	const more = (name) =>
 		fetch(`data/map-${name}.json`)
