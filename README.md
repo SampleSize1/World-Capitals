@@ -15,6 +15,7 @@ Made by [@samplesize_1](https://www.instagram.com/samplesize_1/) to learn every 
 - Two kinds of question: click the country for a capital, or type the capital of a highlighted country
 - Easy and Hard: in Hard, clicks only flash green or red and nothing stays coloured until the end, and typed answers get one try with the exact spelling
 - No separate insets: zoom into the Caribbean or the Pacific like anywhere else; tiny countries get a ring so they're easy to click
+- Major rivers and lakes, labelled as you zoom in (the Nile, the Danube, Lake Victoria...), to help place capitals; clicking one names it instead of counting as the country under it
 - Voice commands to zoom ("Europe", "West Africa", "Caribbean", a country's name) in Chrome, Edge and Safari
 - Progress and best scores stay in your browser: no account, nothing is sent anywhere
 
@@ -37,13 +38,15 @@ Then open http://localhost:8000.
 | `geo.js` | [d3-geo](https://github.com/d3/d3-geo) and [topojson-client](https://github.com/topojson/topojson-client), bundled into one file |
 | `data/countries.json` | Each country's capital, region and capital coordinates (capitals checked October 2026) |
 | `data/map-*.json` | Country shapes at four levels of detail, from coarse (`xlow`) to every island (`high`) |
+| `data/water-*.json` | Lakes and rivers with their names, at two levels of detail |
 | `scripts/build-capital-atlas-map.mjs` | Rebuilds the map files from Natural Earth (instructions at the top of the file) |
+| `scripts/build-capital-atlas-water.mjs` | Rebuilds the lakes and rivers from Natural Earth (instructions at the top of the file) |
 | `progress.js` | Saves progress in the browser (localStorage) |
 
 ## Licences and credits
 
 - **Code and capitals data**: MIT, see [LICENSE](LICENSE).
-- **Map**: [Natural Earth](https://www.naturalearthdata.com/) 1:10m country shapes, public domain.
+- **Map**: [Natural Earth](https://www.naturalearthdata.com/) 1:10m country shapes, lakes and rivers, public domain.
 - **d3-geo, d3-array and topojson-client** by Mike Bostock: ISC, see the [licenses](licenses/) folder.
 
 ## Updates and feedback

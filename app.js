@@ -397,8 +397,8 @@ function refreshMeta(feats) {
 }
 
 /* ---------------- drawing ---------------- */
-const mapCv = $('map'), fxCv = $('fx');
-const bctx = mapCv.getContext('2d'), fctx = fxCv.getContext('2d');
+const mapCv = $('map'), fxCv = $('fx'), lblCv = $('labels');
+const bctx = mapCv.getContext('2d'), fctx = fxCv.getContext('2d'), lctx = lblCv.getContext('2d');
 // slowDevice: drawing the map while it moves took too long, so moving frames use less detail
 let dpr = 1, baseDirty = true, raf = 0, drawnFeats = null, slowDevice = false;
 const COL = {
@@ -415,10 +415,15 @@ const COL = {
 	hover: 'rgba(255, 250, 238, 0.32)',
 	dot: '#101b24',
 	ring: '#ecdec2',
+	lake: '#1d4560',
+	lakeEdge: 'rgba(9, 14, 19, 0.55)',
+	river: '#3f86b0',
+	label: '#a9dcf3',
+	labelHalo: 'rgba(8, 15, 21, 0.82)',
 };
 function sizeCanvases() {
 	dpr = Math.min(2, window.devicePixelRatio || 1);
-	for (const cv of [mapCv, fxCv]) {
+	for (const cv of [mapCv, fxCv, lblCv]) {
 		cv.width = Math.round(layout.w * dpr);
 		cv.height = Math.round(layout.h * dpr);
 	}
@@ -513,6 +518,7 @@ function drawBase() {
 		ctx.fill();
 		ctx.stroke();
 	}
+	drawWater(ctx, path, p);
 	if (globe) {
 		// shade toward the rim so it reads as a ball
 		const g = ctx.createRadialGradient(cx - R * 0.25, cy - R * 0.3, R * 0.35, cx, cy, R);
@@ -528,6 +534,193 @@ function drawBase() {
 		if (ms > 24) slowDevice = true;
 		else if (ms < 8) slowDevice = false;
 	}
+	drawWaterLabels(p);
+}
+
+/* ---------- rivers and lakes ---------- */
+// Natural Earth's big lakes and major rivers (data/water-low and water-high, built by
+// scripts/build-capital-atlas-water.mjs), drawn over the land by zoom level and labelled where
+// there's room. A click on one names it instead of counting as the country underneath.
+const WATER = { low: null, high: null };
+let waterHighRequested = false;
+function useWater(t) {
+	const prep = (f) => {
+		const c = geoCentroid(f);
+		let r = 0;
+		eachPoint(f.geometry, (pt) => {
+			r = Math.max(r, geoDistance(c, pt));
+		});
+		f.c = c;
+		f.r = r + 0.005;
+		f.area = geoArea(f);
+		return f;
+	};
+	return { lakes: feature(t, t.objects.lakes).features.map(prep), rivers: feature(t, t.objects.rivers).features.map(prep) };
+}
+function loadWater(name) {
+	return fetch(`data/water-${name}.json`)
+		.then((r) => r.json())
+		.then((t) => {
+			WATER[name] = useWater(t);
+			invalidate();
+		});
+}
+// Natural Earth gives each lake and river the web-map zoom it shows from (zoom 0 = the world in 256 px)
+const webZoom = (p) => Math.log2((p.scale() * DEG * 360) / 256);
+function waterSet(p) {
+	if (webZoom(p) >= 4.6) {
+		if (!WATER.high && !waterHighRequested) {
+			waterHighRequested = true;
+			loadWater('high').catch(() => {
+				waterHighRequested = false;
+			});
+		}
+		if (WATER.high && !(moving && slowDevice)) return WATER.high;
+	}
+	return WATER.low;
+}
+// lakes show from half a zoom level early, rivers a little less; no labels on the whole-world view
+const LAKE_LEAD = 0.5, RIVER_LEAD = 0.3, LABEL_MIN_ZOOM = 3;
+function visibleWater(list, p, z, lead) {
+	const R = viewCap(p) + 0.02, ctr = [cam.lon, cam.lat];
+	return list.filter((f) => f.properties.mz <= z + lead && (R >= Math.PI || geoDistance(f.c, ctr) - f.r < R));
+}
+function riverWidth(rank, z) {
+	return (rank <= 2 ? 1.5 : rank <= 4 ? 1.15 : 0.9) * Math.min(1.7, Math.max(0.55, 0.45 + z * 0.17));
+}
+const RIVER_CLASSES = [[0, 2], [3, 4], [5, 99]];
+// near: only the water close to some countries (redrawing it over a highlighted country)
+function drawWater(ctx, path, p, near) {
+	const w = waterSet(p);
+	if (!w) return;
+	const z = webZoom(p);
+	const lakes = visibleWater(w.lakes, p, z, LAKE_LEAD).filter((f) => !near || near(f));
+	if (lakes.length) {
+		ctx.beginPath();
+		for (const f of lakes) path(f);
+		ctx.fillStyle = COL.lake;
+		ctx.fill();
+		ctx.lineWidth = 0.6;
+		ctx.strokeStyle = COL.lakeEdge;
+		ctx.stroke();
+	}
+	if (moving && slowDevice) return; // rivers come back when the map stops
+	const rivers = visibleWater(w.rivers, p, z, RIVER_LEAD).filter((f) => !near || near(f));
+	ctx.lineCap = 'round';
+	ctx.strokeStyle = COL.river;
+	for (const [lo, hi] of RIVER_CLASSES) {
+		ctx.beginPath();
+		let any = false;
+		for (const f of rivers) {
+			if (f.properties.r < lo || f.properties.r > hi) continue;
+			path(f);
+			any = true;
+		}
+		if (!any) continue;
+		ctx.lineWidth = riverWidth(lo, z);
+		ctx.stroke();
+	}
+	ctx.lineCap = 'butt';
+}
+// Labels go on their own canvas above the highlights, so a lit-up country never hides them.
+// They're placed biggest first, skipped where they'd overlap a capital or another label,
+// and left off while the map moves.
+let labelFont = '';
+function drawWaterLabels(p) {
+	const ctx = lctx;
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	ctx.clearRect(0, 0, layout.w, layout.h);
+	const w = waterSet(p), z = webZoom(p);
+	if (!w || moving || z < LABEL_MIN_ZOOM) return;
+	if (!labelFont) labelFont = getComputedStyle(document.body).fontFamily;
+	const f = free();
+	const taken = [];
+	for (const c of COUNTRIES) {
+		if (!inScope(c)) continue;
+		const pt = projectPoint(p, [c.lon, c.lat]);
+		if (pt) taken.push([pt[0] - 9, pt[1] - 9, pt[0] + 9, pt[1] + 9]);
+	}
+	const fits = (b) =>
+		b[0] >= f.x0 + 4 && b[2] <= f.x1 - 4 && b[1] >= f.y0 + 4 && b[3] <= f.y1 - 4 &&
+		!taken.some((t) => b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]);
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	ctx.lineJoin = 'round';
+	const place = (text, points, size) => {
+		ctx.font = `italic 500 ${size}px ${labelFont}`;
+		const half = ctx.measureText(text).width / 2 + 2, h = size / 2 + 2;
+		for (const ll of points) {
+			const pt = projectPoint(p, ll);
+			if (!pt) continue;
+			const b = [pt[0] - half, pt[1] - h, pt[0] + half, pt[1] + h];
+			if (!fits(b)) continue;
+			taken.push(b);
+			ctx.lineWidth = 3;
+			ctx.strokeStyle = COL.labelHalo;
+			ctx.strokeText(text, pt[0], pt[1]);
+			ctx.fillStyle = COL.label;
+			ctx.fillText(text, pt[0], pt[1]);
+			return true;
+		}
+		return false;
+	};
+	let n = 0;
+	const lakes = visibleWater(w.lakes, p, z, LAKE_LEAD)
+		.filter((l) => l.properties.n && l.properties.ml <= z + RIVER_LEAD)
+		.sort((a, b) => a.properties.r - b.properties.r || b.area - a.area);
+	for (const l of lakes) if (n < 40 && place(l.properties.n, [l.properties.lp], l.properties.r <= 1 ? 12 : 11)) n++;
+	// a river is several pieces: one label per name, on the first of its points that fits
+	const byName = new Map();
+	for (const r of visibleWater(w.rivers, p, z, RIVER_LEAD)) {
+		const q = r.properties;
+		if (!q.n || q.ml > z + RIVER_LEAD) continue;
+		const g = byName.get(q.n) || { r: q.r, points: [] };
+		g.r = Math.min(g.r, q.r);
+		g.points.push(...q.lp);
+		byName.set(q.n, g);
+	}
+	for (const [name, g] of [...byName].sort((a, b) => a[1].r - b[1].r)) if (n < 70 && place(name, g.points, 11)) n++;
+}
+// What's under the pointer, if it's a lake or a river on screen: { text } for the message
+function waterAt(x, y) {
+	const p = proj, w = p && waterSet(p);
+	if (!w) return null;
+	const ll = p.invert([x, y]);
+	if (!ll || !isFinite(ll[0]) || !isFinite(ll[1])) return null;
+	if (state.view === 'globe' && geoDistance(ll, [cam.lon, cam.lat]) >= Math.PI / 2) return null;
+	const z = webZoom(p);
+	for (const f of w.lakes) {
+		const q = f.properties;
+		if (q.mz <= z + LAKE_LEAD && geoDistance(f.c, ll) < f.r && geoContains(f, ll)) return { text: q.n ? `That’s ${q.n}.` : 'That’s a lake.' };
+	}
+	if (moving && slowDevice) return null;
+	const reach = (px) => px / p.scale(); // pixels to radians, near enough
+	for (const f of w.rivers) {
+		const q = f.properties, tol = Math.max(4, riverWidth(q.r, z) / 2 + 2);
+		if (q.mz > z + RIVER_LEAD || geoDistance(f.c, ll) > f.r + reach(tol + 2)) continue;
+		if (distanceToLine(p, f, x, y) > tol) continue;
+		if (!q.n) return { text: 'That’s a river.' };
+		return { text: `That’s the ${q.n}${/(River|Branch|Canal|Delta)$/.test(q.n) ? '' : ' river'}.` };
+	}
+	return null;
+}
+function distanceToLine(p, f, x, y) {
+	let best = Infinity;
+	const parts = f.geometry.type === 'LineString' ? [f.geometry.coordinates] : f.geometry.coordinates;
+	for (const line of parts) {
+		let a = null;
+		for (const ll of line) {
+			const b = projectPoint(p, ll);
+			// skip a jump across the flat map's edge
+			if (a && b && Math.abs(b[0] - a[0]) < layout.w / 2) {
+				const dx = b[0] - a[0], dy = b[1] - a[1], len = dx * dx + dy * dy;
+				const t = len ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / len)) : 0;
+				best = Math.min(best, Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy)));
+			}
+			a = b;
+		}
+	}
+	return best;
 }
 
 /* ---------- overlay: capital dots, small-country rings, highlights ---------- */
@@ -611,6 +804,16 @@ function drawFx(now) {
 		fillCountry(ctx, path, tid, COL.target, a, '#bff0fb');
 		ctx.shadowBlur = 0;
 	}
+	// lakes and rivers back on top of any lit-up country (the water isn't part of it)
+	const lit = [];
+	const light = (id) => {
+		const c = id && BY_ID.get(id);
+		if (c && c.fi != null) lit.push(META[c.fi]);
+	};
+	if (hoverIdx != null && canHover && !moving) lit.push(META[hoverIdx]);
+	for (const fl of flashes) light(fl.id);
+	light(tid);
+	if (lit.length) drawWater(ctx, path, p, (f) => lit.some((m) => geoDistance(m.c, f.c) < m.r + f.r));
 	// rings around countries too small to see, then every capital
 	for (const [id, s] of screen) {
 		if (!s.tiny) continue;
@@ -710,13 +913,16 @@ function pickAt(x, y) {
 		}
 	}
 	if (best) return { id: best, i: BY_ID.get(best).fi };
-	// 3. the land under the pointer
+	// 3. a lake or river: it gets named, and doesn't count as the country under it
+	const water = waterAt(x, y);
+	if (water) return { water };
+	// 4. the land under the pointer
 	const ll = proj.invert([x, y]);
 	if (ll && isFinite(ll[0]) && isFinite(ll[1]) && (state.view === 'map' || geoDistance(ll, [cam.lon, cam.lat]) < Math.PI / 2)) {
 		const feats = bestFeats();
 		for (const m of META) if (inBox(m.box, ll) && geoContains(feats[m.i], ll)) return { id: m.id, i: m.i };
 	}
-	// 4. close to a capital dot (islands too small to hit, but not small enough for a ring)
+	// 5. close to a capital dot (islands too small to hit, but not small enough for a ring)
 	for (const [id, s] of screen) {
 		const d = Math.hypot(s.x - x, s.y - y);
 		if (d <= 10 && d < bd) {
@@ -823,7 +1029,7 @@ function hoverAt(x, y) {
 	});
 }
 function setHover(hit) {
-	const idx = hit ? hit.i : null;
+	const idx = hit && hit.i != null ? hit.i : null;
 	if (idx === hoverIdx) return;
 	hoverIdx = idx;
 	hoverId = hit ? hit.id : null;
@@ -973,6 +1179,7 @@ function recordStat(id, ok) {
 	store.set('stats', hist);
 }
 function onMapClick(hit) {
+	if (hit && hit.water) return toast(hit.water.text);
 	if (review) return reviewPick(hit);
 	if (state.mode === 'study') return studyPick(hit);
 	if (!session || !session.current || session.busy) return;
@@ -1946,6 +2153,7 @@ async function boot() {
 	updateProj();
 	$('loading').hidden = true;
 	startSession();
+	loadWater('low').catch(() => {});
 	// more detail in the background
 	const more = (name) =>
 		fetch(`data/map-${name}.json`)
@@ -1962,7 +2170,7 @@ async function boot() {
 		window.__capitalAtlas = {
 			state, cam, COUNTRIES, BY_ID, META, LOD, pickAt, setView, setMode, setFormat, startSession, submitAnswer, onMapClick, frameArea,
 			parseVoice, checkAnswer, free, getSession: () => session, getStudy: () => study, getReview: () => review, project: (ll) => projectPoint(proj, ll),
-			camForCountry, screen, geoContains, bestFeats,
+			camForCountry, screen, geoContains, bestFeats, waterAt, WATER, webZoom, getHoverIdx: () => hoverIdx,
 			prof: (c, fast) => {
 				Object.assign(cam, c);
 				constrain();

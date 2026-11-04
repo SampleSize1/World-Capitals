@@ -67,6 +67,52 @@ for (const f of ne.features) {
 	}
 }
 
+// Seams in the source data, cleaned up so they don't show as stray lines:
+// - Holes no other country fills: two slivers where Egypt meets the Hala'ib Triangle. Filled.
+// - A hole the same country fills with a piece of its own: Baikonur (leased to Russia) in
+//   Kazakhstan. Hole and piece merged, so no ring is drawn round it.
+// - A hairline spike in Egypt's coastline along the old Hala'ib line. Removed.
+// Holes another country fills (Lesotho, the Vatican, San Marino...) stay.
+const ringBox = (r) => {
+	const xs = r.map((q) => q[0]), ys = r.map((q) => q[1]);
+	return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+};
+const sameBox = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 0.05);
+for (const [key, g] of groups) {
+	const own = g.polygons.map((p) => ringBox(p[0]));
+	const merged = new Set();
+	g.polygons = g.polygons.map((p) => {
+		const keep = p.slice(1).filter((hole) => {
+			const b = ringBox(hole);
+			const mine = own.findIndex((ob) => sameBox(b, ob));
+			if (mine >= 0) {
+				merged.add(mine);
+				console.log(`merged a piece of ${key} into the shape round it at ${b.map((v) => v.toFixed(2)).join(', ')}`);
+				return false;
+			}
+			const other = [...groups].some(([k, og]) => k !== key && og.polygons.some((q) => sameBox(b, ringBox(q[0]))));
+			if (!other) console.log(`filled a gap in ${key} at ${b.map((v) => v.toFixed(2)).join(', ')}`);
+			return other;
+		});
+		return [p[0], ...keep];
+	});
+	g.polygons = g.polygons.filter((p, i) => !merged.has(i));
+}
+const HALAIB_SEAM = [34.9, 22.4, 35.8, 23.3];
+for (const p of groups.get('EGY').polygons) {
+	const r = p[0];
+	for (let k = 1; k < r.length - 1; ) {
+		const [a, b, c] = [r[k - 1], r[k], r[k + 1]];
+		const v1 = [a[0] - b[0], a[1] - b[1]], v2 = [c[0] - b[0], c[1] - b[1]];
+		const n = Math.hypot(...v1) * Math.hypot(...v2);
+		const inSeam = b[0] > HALAIB_SEAM[0] && b[0] < HALAIB_SEAM[2] && b[1] > HALAIB_SEAM[1] && b[1] < HALAIB_SEAM[3];
+		if (inSeam && n && (v1[0] * v2[0] + v1[1] * v2[1]) / n > 0.999) {
+			r.splice(k, 1); // the tip of the spike; look again from the point before
+			k = Math.max(1, k - 1);
+		} else k++;
+	}
+}
+
 const fc = {
 	type: 'FeatureCollection',
 	features: [...groups].map(([key, g]) => ({

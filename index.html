@@ -51,7 +51,7 @@ body {
   background: radial-gradient(120% 80% at 50% 45%, #121e28 0%, #0d151c 45%, var(--bg) 78%);
 }
 #stage canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
-#fx { pointer-events: none; }
+#fx, #labels { pointer-events: none; }
 #stage.hovering #map { cursor: pointer; }
 #stage.dragging #map { cursor: grabbing; }
 
@@ -362,6 +362,7 @@ body.clean #cleanExit { display: inline-block; opacity: .55; }
 <div id="stage">
   <canvas id="map" tabindex="0" aria-label="Map of the world. Drag to move, scroll or pinch to zoom, click a country to select it."></canvas>
   <canvas id="fx" aria-hidden="true"></canvas>
+  <canvas id="labels" aria-hidden="true"></canvas>
 </div>
 <svg id="leader" aria-hidden="true"><line id="leaderLine" x1="0" y1="0" x2="0" y2="0"></line></svg>
 <div class="callout" id="callout" hidden></div>
