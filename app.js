@@ -1015,7 +1015,13 @@ function onMapClick(hit) {
 function submitAnswer(text) {
 	if (!session || !session.current || session.busy || state.format !== 'type' || review) return;
 	const cur = session.current;
-	if (!text.trim()) return;
+	// Enter with nothing typed moves on: Easy skips this country for later, Hard gives up on it
+	// (the same as the Skip / Show me button; after a reveal it goes to the next country)
+	if (!text.trim()) {
+		if (session.phase !== 'reveal' && typeEasy()) moveQuestion(1);
+		else skip();
+		return;
+	}
 	const res = checkAnswer(cur, text, { strict: state.level === 'hard', keepSecret: typeEasy() && session.phase !== 'reveal' });
 	if (session.phase === 'reveal') {
 		if (res.ok) {
@@ -1392,8 +1398,8 @@ const LEVEL_HINT = {
 		hard: 'Clicks flash green or red, but nothing stays coloured until the end and wrong clicks aren’t named: each question stands on its own.',
 	},
 	type: {
-		easy: 'Guess as often as you like, skip back and forth between countries, or give up to see the answer.',
-		hard: 'One try per country, spelled right (accents and capitals don’t matter).',
+		easy: 'Guess as often as you like, skip back and forth between countries (Enter with nothing typed skips), or give up to see the answer.',
+		hard: 'One try per country, spelled right (accents and capitals don’t matter). Enter with nothing typed gives up.',
 	},
 };
 // Bottom buttons: Previous / Next in Study; Back / Skip / Give up for Easy typing; Show me (or Skip) otherwise
