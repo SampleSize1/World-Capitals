@@ -177,6 +177,8 @@ body.clean .ractions, body.clean .rhint { display: none; }
 .rail button:hover { background: var(--bg-lift); }
 .rail button[aria-pressed="true"] { border-color: var(--scan); background: #13232c; }
 .rail button[aria-pressed="true"] em { color: var(--scan); }
+/* subregions, listed under their continent */
+.rail button.sub { margin-left: 12px; padding-block: 5px; font-size: 12.5px; font-weight: 600; }
 
 /* ---------- control panel ---------- */
 .panel {
@@ -333,6 +335,7 @@ body.clean #cleanExit { display: inline-block; opacity: .55; }
   .rail::-webkit-scrollbar { display: none; }
   .rail-title { display: none; }
   .rail button { flex: none; background: var(--panel); border-color: var(--line); white-space: nowrap; padding: 6px 10px; font-size: 13px; }
+  .rail button.sub { margin-left: 0; font-size: 12px; font-weight: 600; }
   .dock { grid-column: 1; grid-row: 6; }
   .dock .btn { padding: 9px 12px; }
   #settingsBtn, #viewBtn { display: inline-block; }

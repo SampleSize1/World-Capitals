@@ -26,7 +26,44 @@ const REGIONS = [
 	{ key: 'africa', label: 'Africa' },
 	{ key: 'oceania', label: 'Oceania' },
 ];
-const REGION = Object.fromEntries(REGIONS.map((r) => [r.key, r]));
+// Subregions: each big continent split into a few groups of neighbouring countries (South America
+// stays whole). box = what the map frames for it, same format as AREAS below.
+const SUBREGIONS = [
+	{ key: 'north-central-america', parent: 'north-america', label: 'North & Central America', box: [-170, 7, -52, 72],
+		ids: ['CAN', 'USA', 'MEX', 'GTM', 'BLZ', 'HND', 'SLV', 'NIC', 'CRI', 'PAN'] },
+	{ key: 'caribbean', parent: 'north-america', label: 'Caribbean', box: [-86, 10, -59, 27],
+		ids: ['CUB', 'JAM', 'HTI', 'DOM', 'BHS', 'KNA', 'ATG', 'DMA', 'LCA', 'VCT', 'BRB', 'GRD', 'TTO'] },
+	{ key: 'northern-europe', parent: 'europe', label: 'Northern Europe', box: [-25, 50, 32, 71],
+		ids: ['GBR', 'IRL', 'ISL', 'NOR', 'SWE', 'FIN', 'DNK', 'EST', 'LVA', 'LTU'] },
+	{ key: 'western-europe', parent: 'europe', label: 'Western Europe', box: [-6, 41, 18, 56],
+		ids: ['FRA', 'BEL', 'NLD', 'LUX', 'MCO', 'DEU', 'CHE', 'LIE', 'AUT'] },
+	{ key: 'southern-europe', parent: 'europe', label: 'Southern Europe', box: [-10, 34, 35, 47.5],
+		ids: ['PRT', 'ESP', 'AND', 'ITA', 'SMR', 'VAT', 'MLT', 'SVN', 'HRV', 'BIH', 'SRB', 'MNE', 'KOS', 'ALB', 'MKD', 'GRC', 'CYP'] },
+	{ key: 'eastern-europe', parent: 'europe', label: 'Eastern Europe', box: [12, 41, 50, 61],
+		ids: ['POL', 'CZE', 'SVK', 'HUN', 'ROU', 'BGR', 'MDA', 'UKR', 'BLR', 'RUS'] },
+	{ key: 'east-asia', parent: 'asia', label: 'East Asia', box: [73, 18, 146, 54],
+		ids: ['CHN', 'JPN', 'PRK', 'KOR', 'MNG', 'TWN'] },
+	{ key: 'southeast-asia', parent: 'asia', label: 'Southeast Asia', box: [92, -11, 141, 28],
+		ids: ['MMR', 'THA', 'LAO', 'KHM', 'VNM', 'MYS', 'SGP', 'IDN', 'BRN', 'PHL', 'TLS'] },
+	{ key: 'south-central-asia', parent: 'asia', label: 'South & Central Asia', box: [46, -1, 98, 56],
+		ids: ['IND', 'PAK', 'AFG', 'BGD', 'NPL', 'BTN', 'LKA', 'MDV', 'KAZ', 'UZB', 'TKM', 'KGZ', 'TJK'] },
+	{ key: 'middle-east', parent: 'asia', label: 'Middle East', box: [25, 12, 64, 44],
+		ids: ['TUR', 'GEO', 'ARM', 'AZE', 'IRN', 'IRQ', 'SYR', 'LBN', 'ISR', 'PSX', 'JOR', 'SAU', 'YEM', 'OMN', 'ARE', 'QAT', 'BHR', 'KWT'] },
+	{ key: 'north-africa', parent: 'africa', label: 'North Africa', box: [-18, 7, 39, 38],
+		ids: ['MAR', 'DZA', 'TUN', 'LBY', 'EGY', 'SDN', 'TCD'] },
+	{ key: 'west-africa', parent: 'africa', label: 'West Africa', box: [-26, -4, 17, 27.5],
+		ids: ['MRT', 'SEN', 'GMB', 'GNB', 'GIN', 'SLE', 'LBR', 'CPV', 'MLI', 'BFA', 'NER', 'CIV', 'GHA', 'TGO', 'BEN', 'NGA', 'CMR', 'GNQ', 'GAB', 'STP'] },
+	{ key: 'east-africa', parent: 'africa', label: 'East Africa', box: [14, -26, 58, 18.5],
+		ids: ['ERI', 'DJI', 'ETH', 'SOM', 'SDS', 'CAF', 'KEN', 'UGA', 'RWA', 'BDI', 'TZA', 'MDG', 'COM', 'MUS', 'SYC'] },
+	{ key: 'southern-africa', parent: 'africa', label: 'Southern Africa', box: [11, -35, 41, 5.5],
+		ids: ['COG', 'COD', 'AGO', 'ZMB', 'MWI', 'MOZ', 'ZWE', 'NAM', 'BWA', 'ZAF', 'LSO', 'SWZ'] },
+	{ key: 'australia-melanesia', parent: 'oceania', label: 'Australia & Melanesia', box: [112, -48, 183, 0],
+		ids: ['AUS', 'NZL', 'PNG', 'SLB', 'VUT', 'FJI'] },
+	{ key: 'micronesia-polynesia', parent: 'oceania', label: 'Micronesia & Polynesia', box: [130, -23, 192, 15],
+		ids: ['PLW', 'FSM', 'MHL', 'NRU', 'KIR', 'WSM', 'TON', 'TUV'] },
+];
+const REGION = Object.fromEntries([...REGIONS, ...SUBREGIONS].map((r) => [r.key, r]));
+const SUB_IDS = new Map(SUBREGIONS.map((s) => [s.key, new Set(s.ids)]));
 // [west, south, east, north] in degrees; east goes past 180 for areas that cross the date line
 const AREAS = {
 	world: { label: 'World', box: null },
@@ -59,6 +96,8 @@ const AREAS = {
 	melanesia: { label: 'Melanesia', box: [140, -23, 180, 0] },
 	'micronesia-region': { label: 'Micronesia (region)', box: [130, -2, 175, 15] },
 };
+// every subregion is also a place to zoom to (this replaces the older boxes of the same name)
+for (const s of SUBREGIONS) AREAS[s.key] = { label: s.label, box: s.box };
 const ZOOM_KEYS = ['world', 'europe', 'asia', 'north-america', 'south-america', 'africa', 'oceania', 'caribbean', 'middle-east', 'pacific'];
 
 /* ---------------- state ---------------- */
@@ -66,7 +105,7 @@ const oneOf = (v, list, d) => (list.includes(v) ? v : d);
 const state = {
 	mode: oneOf(store.get('mode', 'study'), ['study', 'practice', 'test'], 'study'),
 	format: oneOf(store.get('format', 'click'), ['click', 'type'], 'click'),
-	region: oneOf(store.get('region', 'world'), REGIONS.map((r) => r.key), 'world'),
+	region: oneOf(store.get('region', 'world'), Object.keys(REGION), 'world'),
 	view: oneOf(store.get('view', 'globe'), ['globe', 'map'], 'globe'),
 	level: oneOf(store.get('level', 'easy'), ['easy', 'hard'], 'easy'),
 	clean: false,
@@ -79,7 +118,8 @@ const CAPITAL_INDEX = new Map(); // normalised capital -> country
 const LOD = { xlow: null, low: null, mid: null, high: null }; // GeoJSON features at four levels of detail (same order)
 let META = []; // per feature: { i, id, country, name, of, c, r, area, box }
 
-const inScope = (c) => state.region === 'world' || c.region === state.region;
+const inRegion = (c, key) => key === 'world' || c.region === key || (SUB_IDS.has(key) && SUB_IDS.get(key).has(c.id));
+const inScope = (c) => inRegion(c, state.region);
 const scopeCountries = () => COUNTRIES.filter(inScope);
 const regionLabel = (k = state.region) => REGION[k].label;
 
@@ -1264,17 +1304,24 @@ function renderRail() {
 	title.className = 'rail-title';
 	title.textContent = 'Study one region at a time';
 	const kids = [title];
-	for (const r of REGIONS) {
+	const button = (r, sub) => {
 		const b = document.createElement('button');
 		b.type = 'button';
 		b.dataset.region = r.key;
+		if (sub) b.className = 'sub';
 		b.setAttribute('aria-pressed', String(state.region === r.key));
 		const l = document.createElement('span');
 		l.textContent = r.label;
 		const n = document.createElement('em');
-		n.textContent = r.key === 'world' ? COUNTRIES.length : COUNTRIES.filter((c) => c.region === r.key).length;
+		n.textContent = COUNTRIES.filter((c) => inRegion(c, r.key)).length;
 		b.append(l, n);
-		kids.push(b);
+		return b;
+	};
+	// the chosen continent (or the continent of the chosen subregion) lists its subregions under it
+	const open = REGION[state.region].parent || state.region;
+	for (const r of REGIONS) {
+		kids.push(button(r, false));
+		if (r.key === open) for (const s of SUBREGIONS) if (s.parent === r.key) kids.push(button(s, true));
 	}
 	$('rail').replaceChildren(...kids);
 	const rail = $('rail'), sel = rail.querySelector('[aria-pressed="true"]');
@@ -1591,7 +1638,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ---------------- voice commands ---------------- */
-// Say a place: a region ("Europe"), an area ("Caribbean", "Middle East"), any country ("Japan"),
+// Say a place: a region ("Europe"), a subregion or area ("West Africa", "Caribbean"), any country ("Japan"),
 // "globe" / "flat map", "zoom in" / "zoom out", or "world". A command only fires when the whole
 // phrase is a command. Capitals aren't commands, so voice can't answer a question for you.
 // Uses the browser's own speech recognition (Chrome, Edge, Safari; not Firefox).
@@ -1607,6 +1654,12 @@ const AREA_WORDS = {
 	'middle-east': ['middle east', 'mideast', 'near east'],
 	pacific: ['pacific', 'pacific islands', 'south pacific', 'pacific ocean'],
 	'central-america': ['central america'],
+	'north-central-america': ['north and central america', 'north central america', 'north america and central america'],
+	'northern-europe': ['northern europe', 'north europe'],
+	'southern-europe': ['southern europe', 'south europe'],
+	'south-central-asia': ['south and central asia', 'south central asia', 'southern and central asia', 'central and south asia'],
+	'australia-melanesia': ['australia and melanesia', 'australia melanesia'],
+	'micronesia-polynesia': ['micronesia and polynesia', 'micronesia polynesia'],
 	'lesser-antilles': ['lesser antilles', 'eastern caribbean', 'windward islands', 'leeward islands'],
 	'southeast-asia': ['southeast asia', 'south east asia'],
 	'east-asia': ['east asia', 'far east'],
@@ -1615,8 +1668,8 @@ const AREA_WORDS = {
 	'persian-gulf': ['persian gulf', 'gulf', 'arabian gulf', 'gulf states'],
 	balkans: ['balkans', 'balkan'],
 	scandinavia: ['scandinavia', 'nordics', 'nordic countries'],
-	'western-europe': ['western europe'],
-	'eastern-europe': ['eastern europe'],
+	'western-europe': ['western europe', 'west europe'],
+	'eastern-europe': ['eastern europe', 'east europe'],
 	'north-africa': ['north africa', 'northern africa'],
 	'west-africa': ['west africa', 'western africa'],
 	'central-africa': ['central africa'],

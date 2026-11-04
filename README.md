@@ -10,12 +10,12 @@ Made by [@samplesize_1](https://www.instagram.com/samplesize_1/) to learn every 
 
 - 197 countries: the 193 UN members plus Vatican City, Palestine, Kosovo and Taiwan
 - A 3D globe or a flat map, and you can switch at any time, even mid-test
-- The whole world or one region: Europe, Asia, North America, South America, Africa or Oceania
+- The whole world, one region (Europe, Asia, North America, South America, Africa or Oceania), or a subregion such as West Africa or Southeast Asia
 - **Study**, **Practice** (misses come back until you get them right) and **Test** (every country once, timed, with your best score saved)
 - Two kinds of question: click the country for a capital, or type the capital of a highlighted country
-- Easy and Hard: Hard hides the green and red marks, and typed answers get one try with the exact spelling
+- Easy and Hard: in Hard, clicks only flash green or red and nothing stays coloured until the end, and typed answers get one try with the exact spelling
 - No separate insets: zoom into the Caribbean or the Pacific like anywhere else; tiny countries get a ring so they're easy to click
-- Voice commands to zoom ("Europe", "Caribbean", a country's name) in Chrome, Edge and Safari
+- Voice commands to zoom ("Europe", "West Africa", "Caribbean", a country's name) in Chrome, Edge and Safari
 - Progress and best scores stay in your browser: no account, nothing is sent anywhere
 
 ## Run it yourself
