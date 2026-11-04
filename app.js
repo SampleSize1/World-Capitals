@@ -600,7 +600,9 @@ function statusRingColor(id) {
 	return st === 'ok' ? COL.ok : st === 'bad' ? COL.bad : COL.ring;
 }
 function flash(id, kind) {
-	if (quiet() && !review) return; // Hard clicking: no green / red on the map
+	// Hard clicking: a click still flashes green or red and fades back, but a missed country's
+	// location stays hidden, and nothing stays coloured until the end
+	if (quiet() && !review && kind === 'reveal') return;
 	flashes.push({ id, kind, t0: performance.now() });
 	invalidate(false);
 }
@@ -946,6 +948,8 @@ function onMapClick(hit) {
 		toast(`That’s ${c.name}, outside ${regionLabel()}.`, 'bad');
 		return;
 	}
+	// Easy: a country already coloured green or red has been answered, so a click on it doesn't count
+	if (c.id !== session.current.id && statusOf(c.id)) return;
 	const cur = session.current, right = c.id === cur.id;
 	if (session.phase === 'reveal') {
 		if (right) {
@@ -1015,6 +1019,7 @@ function gotIt(cur, note) {
 	pulsePrompt('ok');
 	if (note) toast(note, 'ok');
 	else if (quiet()) toast('Correct.', 'ok');
+	else if (state.format === 'click') toast(`Correct, that’s ${cur.name}.`, 'ok');
 	session.busy = true;
 	renderPrompt();
 	invalidate();
@@ -1028,7 +1033,7 @@ function missed(cur, answered) {
 	if (state.mode === 'test') {
 		// tests move on, but show where it was
 		session.result.set(cur.id, 'bad');
-		flash(cur.id, 'reveal'); // (Hard clicking: flash() shows nothing)
+		flash(cur.id, 'reveal'); // (Hard clicking: flash() skips this, so the answer stays hidden)
 		session.busy = true;
 		renderPrompt();
 		invalidate();
@@ -1099,10 +1104,10 @@ function clearReview() {
 function reviewPick(hit) {
 	if (!hit) return;
 	if (!hit.id) return toastPlace(hit.i);
-	const c = BY_ID.get(hit.id), st = review.status.get(c.id);
-	if (!st) return toast(`${c.name}: ${c.capital}.`);
-	const how = st === 'ok' ? (state.mode === 'test' ? 'correct' : 'first try') : state.mode === 'test' ? 'missed' : 'needed help';
-	setCallout(c.id, c.capital, `${c.name} · ${how}`);
+	const c = BY_ID.get(hit.id);
+	if (!review.status.get(c.id)) return toast(`${c.name}: ${c.capital}.`);
+	// the map's green / red already says how it went
+	setCallout(c.id, c.capital, c.name);
 }
 $('rAgain').addEventListener('click', () => startSession());
 $('rPractice').addEventListener('click', () => {
@@ -1337,7 +1342,7 @@ function renderSegs() {
 const LEVEL_HINT = {
 	click: {
 		easy: 'Countries you’ve answered stay green or red, and a wrong click tells you which country it was.',
-		hard: 'No colours on the map until the end and no names on wrong clicks: each question stands on its own.',
+		hard: 'Clicks flash green or red, but nothing stays coloured until the end and wrong clicks aren’t named: each question stands on its own.',
 	},
 	type: {
 		easy: 'Guess as often as you like, skip back and forth between countries, or give up to see the answer.',
