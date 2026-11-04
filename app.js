@@ -418,7 +418,7 @@ const COL = {
 	ring: '#ecdec2',
 	lake: '#1d4560',
 	lakeEdge: 'rgba(9, 14, 19, 0.55)',
-	river: '#3f86b0',
+	river: 'rgba(74, 146, 190, 0.8)',
 	label: '#a9dcf3',
 	labelHalo: 'rgba(8, 15, 21, 0.82)',
 	oceanLabel: 'rgba(169, 220, 243, 0.62)',
@@ -511,7 +511,7 @@ function drawBase() {
 	const feats = LOD[lodName(p)];
 	drawnFeats = feats;
 	ctx.lineJoin = 'round';
-	ctx.lineWidth = Math.min(1.2, 0.45 + p.scale() * DEG * 0.01);
+	ctx.lineWidth = borderWidth(p);
 	ctx.strokeStyle = COL.border;
 	for (const i of visibleIndices(p)) {
 		ctx.beginPath();
@@ -597,8 +597,10 @@ function visibleWater(list, p, z, lead) {
 	const R = viewCap(p) + 0.02, ctr = [cam.lon, cam.lat];
 	return list.filter((f) => f.properties.mz <= z + lead && (R >= Math.PI || geoDistance(f.c, ctr) - f.r < R));
 }
-function riverWidth(rank, z) {
-	return (rank <= 2 ? 1.5 : rank <= 4 ? 1.15 : 0.9) * Math.min(1.7, Math.max(0.55, 0.45 + z * 0.17));
+// borders get thicker as you zoom in; rivers stay thinner than them so borders read first
+const borderWidth = (p) => Math.min(1.2, 0.45 + p.scale() * DEG * 0.01);
+function riverWidth(rank, p) {
+	return Math.max(0.45, borderWidth(p) * (rank <= 2 ? 0.75 : rank <= 4 ? 0.6 : 0.5));
 }
 const RIVER_CLASSES = [[0, 2], [3, 4], [5, 99]];
 // near: only the water close to some countries (redrawing it over a highlighted country)
@@ -629,7 +631,7 @@ function drawWater(ctx, path, p, near) {
 			any = true;
 		}
 		if (!any) continue;
-		ctx.lineWidth = riverWidth(lo, z);
+		ctx.lineWidth = riverWidth(lo, p);
 		ctx.stroke();
 	}
 	ctx.lineCap = 'butt';
@@ -706,7 +708,9 @@ function drawWaterLabels(p) {
 	}
 	for (const [name, g] of [...byName].sort((a, b) => a[1].r - b[1].r)) if (n < 70 && place(name, g.points, 11)) n++;
 }
-// What's under the pointer, if it's a lake or a river on screen: { text } for the message
+// The lake under the pointer, if one is on screen: { text } for the message. Lakes can be clicked
+// and don't count as the country around them; rivers are too thin for that, so a click or hover
+// on a river goes to the country under it.
 function waterAt(x, y) {
 	const p = proj, w = p && waterSet(p);
 	if (!w) return null;
@@ -718,34 +722,7 @@ function waterAt(x, y) {
 		const q = f.properties;
 		if (q.mz <= z + LAKE_LEAD && geoDistance(f.c, ll) < f.r && geoContains(f, ll)) return { text: q.n ? `That’s ${q.n}.` : 'That’s a lake.' };
 	}
-	if (moving && slowDevice) return null;
-	const reach = (px) => px / p.scale(); // pixels to radians, near enough
-	for (const f of w.rivers) {
-		const q = f.properties, tol = Math.max(4, riverWidth(q.r, z) / 2 + 2);
-		if (q.mz > z + RIVER_LEAD || geoDistance(f.c, ll) > f.r + reach(tol + 2)) continue;
-		if (distanceToLine(p, f, x, y) > tol) continue;
-		if (!q.n) return { text: 'That’s a river.' };
-		return { text: `That’s the ${q.n}${/(River|Branch|Canal|Delta)$/.test(q.n) ? '' : ' river'}.` };
-	}
 	return null;
-}
-function distanceToLine(p, f, x, y) {
-	let best = Infinity;
-	const parts = f.geometry.type === 'LineString' ? [f.geometry.coordinates] : f.geometry.coordinates;
-	for (const line of parts) {
-		let a = null;
-		for (const ll of line) {
-			const b = projectPoint(p, ll);
-			// skip a jump across the flat map's edge
-			if (a && b && Math.abs(b[0] - a[0]) < layout.w / 2) {
-				const dx = b[0] - a[0], dy = b[1] - a[1], len = dx * dx + dy * dy;
-				const t = len ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / len)) : 0;
-				best = Math.min(best, Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy)));
-			}
-			a = b;
-		}
-	}
-	return best;
 }
 
 /* ---------- overlay: capital dots, small-country rings, highlights ---------- */
@@ -938,7 +915,7 @@ function pickAt(x, y) {
 		}
 	}
 	if (best) return { id: best, i: BY_ID.get(best).fi };
-	// 3. a lake or river: it gets named, and doesn't count as the country under it
+	// 3. a lake: it gets named, and doesn't count as the country around it
 	const water = waterAt(x, y);
 	if (water) return { water };
 	// 4. the land under the pointer

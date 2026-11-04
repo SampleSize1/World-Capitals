@@ -15,7 +15,7 @@ Made by [@samplesize_1](https://www.instagram.com/samplesize_1/) to learn every 
 - Two kinds of question: click the country for a capital, or type the capital of a highlighted country
 - Easy and Hard: in Hard, clicks only flash green or red and nothing stays coloured until the end, and typed answers get one try with the exact spelling
 - No separate insets: zoom into the Caribbean or the Pacific like anywhere else; tiny countries get a ring so they're easy to click
-- Major rivers and lakes, labelled as you zoom in (the Nile, the Danube, Lake Victoria...), to help place capitals; clicking one names it instead of counting as the country under it
+- Major rivers and lakes, labelled as you zoom in (the Nile, the Danube, Lake Victoria...), to help place capitals; clicking a lake names it instead of counting as the country around it
 - Names of the oceans and seas too; switch all the water names off and on with L or the Names button
 - Voice commands to zoom ("Europe", "West Africa", "Caribbean", a country's name) in Chrome, Edge and Safari
 - Progress and best scores stay in your browser: no account, nothing is sent anywhere
