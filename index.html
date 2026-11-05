@@ -136,6 +136,10 @@ body {
 .answer input:focus { outline: none; border-color: var(--scan); }
 .answer input.is-bad { border-color: var(--bad); }
 .answer .btn { flex: none; }
+/* Images mode buttons */
+.pinbar { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; align-items: center; margin-top: 2px; }
+.pinsize { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
+.pinsize .btn { padding: 5px 10px; line-height: 1; }
 .review { display: grid; gap: 8px; justify-items: center; }
 .legend { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; font-size: 13.5px; }
 .legend .key { display: inline-flex; align-items: center; gap: 7px; }
@@ -399,6 +403,17 @@ body.clean #cleanExit { display: inline-block; opacity: .55; }
         <input id="answer" type="text" placeholder="Type the capital" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-label="Your answer">
         <button class="btn primary" type="submit">Enter</button>
       </form>
+      <!-- Images mode: put a picture on the selected country -->
+      <div class="pinbar" id="pinBar" hidden>
+        <button class="btn" id="pinPaste" type="button" title="Paste a copied image onto this country">Paste image</button>
+        <button class="btn" id="pinUpload" type="button" title="Choose an image file for this country">Upload</button>
+        <button class="btn danger" id="pinRemove" type="button" hidden>Remove</button>
+        <span class="pinsize">Size
+          <button class="btn" id="pinSmaller" type="button" aria-label="Smaller images">−</button>
+          <button class="btn" id="pinBigger" type="button" aria-label="Bigger images">+</button>
+        </span>
+        <input id="pinFile" type="file" accept="image/*" hidden>
+      </div>
       <div class="review" id="review" hidden>
         <div class="legend">
           <span class="key ok"><i></i><b id="rOk">0</b> <span id="rOkLabel">correct</span></span>
@@ -459,6 +474,8 @@ body.clean #cleanExit { display: inline-block; opacity: .55; }
         <button type="button" data-v="study">Study</button>
         <button type="button" data-v="practice">Practice</button>
         <button type="button" data-v="test">Test</button>
+        <!-- the hidden Images mode (I, or #images): only shown while it's on -->
+        <button type="button" data-v="images" id="imagesModeBtn" hidden>Images</button>
       </div>
       <p class="hint" id="modeHint" style="margin-top:7px"></p>
     </section>

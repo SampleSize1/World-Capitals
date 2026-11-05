@@ -1,6 +1,8 @@
 // World Capitals (formerly Capital Atlas; the folder and saved-progress id stay capital-atlas): learn the capital of every country on a 3D globe or a flat map.
 // Built like Bone Atlas: Study, Practice and Test, by region, with two kinds of question
 // (click the country for a capital, or type the capital of a highlighted country).
+// There's also a hidden Images mode (press I, or open the page with #images): Study with your own
+// pictures pasted onto countries as memory hooks. See "image mode" below.
 // The map is drawn on two canvases: `map` (land and sea, redrawn when the view moves) and
 // `fx` (highlights, capital dots, flashes; cheap to redraw every frame).
 import {
@@ -111,7 +113,20 @@ const state = {
 	clean: false,
 	names: store.get('waterNames', true) !== false, // names of oceans, seas, lakes and rivers
 	zoomArea: null, // the zoom chip the view was last set to (cleared by moving the map by hand)
+	pins: false, // the hidden Images mode: Study, plus your own pictures pinned to countries
+	pinSize: 2, // which of PIN_SIZES the pictures are drawn at
 };
+// Images mode is part of Study. It comes back after a reload if you left it on, and #images turns it on.
+if (location.hash === '#images') {
+	state.mode = 'study';
+	state.pins = true;
+	store.set('mode', 'study');
+	store.set('imageMode', true);
+} else state.pins = state.mode === 'study' && store.get('imageMode', false) === true;
+{
+	const n = Number(store.get('imageSize', 2));
+	state.pinSize = Number.isFinite(n) ? Math.min(4, Math.max(0, Math.round(n))) : 2;
+}
 
 let COUNTRIES = [];
 const BY_ID = new Map();
@@ -422,6 +437,9 @@ const COL = {
 	label: '#a9dcf3',
 	labelHalo: 'rgba(8, 15, 21, 0.82)',
 	oceanLabel: 'rgba(169, 220, 243, 0.62)',
+	pinEdge: 'rgba(8, 15, 21, 0.85)', // dark outline round an image icon, so it stands off the land
+	pinRing: 'rgba(236, 222, 194, 0.9)',
+	pinEmpty: 'rgba(10, 15, 20, 0.55)', // the dashed square where the selected country's image will go
 };
 function sizeCanvases() {
 	dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -654,6 +672,10 @@ function drawWaterLabels(p) {
 		const pt = projectPoint(p, [c.lon, c.lat]);
 		if (pt) taken.push([pt[0] - 9, pt[1] - 9, pt[0] + 9, pt[1] + 9]);
 	}
+	if (state.pins) {
+		const half = PIN_SIZES[state.pinSize] / 2 + 3;
+		for (const s of pinSpots(p)) taken.push([s.x - half, s.y - half, s.x + half, s.y + half]);
+	}
 	const fits = (b) =>
 		b[0] >= f.x0 + 4 && b[2] <= f.x1 - 4 && b[1] >= f.y0 + 4 && b[3] <= f.y1 - 4 &&
 		!taken.some((t) => b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]);
@@ -837,6 +859,8 @@ function drawFx(now) {
 		ctx.strokeStyle = COL.ring;
 		ctx.stroke();
 	}
+	if (state.pins) drawPins(ctx, p, tid);
+	else pinRects = [];
 	placeCallout(p);
 	return busy;
 }
@@ -885,6 +909,16 @@ function placeCallout(p) {
 	let x = pt[0] + 22, y = pt[1] - bh - 18;
 	if (x + bw > f.x1 - 6) x = pt[0] - 22 - bw;
 	if (y < f.y0 + 4) y = pt[1] + 18;
+	// Images mode: keep the label off the country's own picture (the first corner that fits and is clear)
+	const pinPt = state.pins && c.fi != null && projectPoint(p, iconLL(c));
+	if (pinPt) {
+		const h = PIN_SIZES[state.pinSize] / 2 + 6;
+		const clear = ([cx, cy]) => cx > pinPt[0] + h || cx + bw < pinPt[0] - h || cy > pinPt[1] + h || cy + bh < pinPt[1] - h;
+		const fits = ([cx, cy]) => cx >= f.x0 + 4 && cx + bw <= f.x1 - 6 && cy >= f.y0 + 4 && cy + bh <= f.y1 - 4;
+		const spots = [[pt[0] + 22, pt[1] - bh - 18], [pt[0] - 22 - bw, pt[1] - bh - 18], [pt[0] + 22, pt[1] + 18], [pt[0] - 22 - bw, pt[1] + 18]];
+		const pick = spots.find((s) => fits(s) && clear(s));
+		if (pick) [x, y] = pick;
+	}
 	el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
 	const ex = x > pt[0] ? x : x + bw, ey = y > pt[1] ? y : y + bh;
 	line.setAttribute('x1', pt[0]);
@@ -896,6 +930,11 @@ function placeCallout(p) {
 /* ---------------- picking ---------------- */
 function pickAt(x, y) {
 	let best = null, bd = Infinity;
+	// 0. Images mode: a picture belongs to its country, even where it hangs over a neighbour (the top one wins)
+	for (let k = pinRects.length - 1; k >= 0; k--) {
+		const r = pinRects[k];
+		if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) return { id: r.id, i: BY_ID.get(r.id).fi };
+	}
 	// 1. right on a capital dot: that capital's country (Jerusalem sits on the West Bank border, Rome next to the Vatican)
 	for (const [id, s] of screen) {
 		const d = Math.hypot(s.x - x, s.y - y);
@@ -1090,6 +1129,462 @@ function showCountry(c, forTyping) {
 	state.zoomArea = null;
 	renderZoom();
 	flyTo(camForCountry(c));
+}
+
+/* ---------------- image mode (hidden) ---------------- */
+// Study with picture hooks: pick a country, paste an image (from Google Images, say) and it's pinned
+// to the middle of that country as a small square icon, the same size for every country. Turn it on
+// with I or #images; the Mode bar shows "Images" while it's on. Pictures are cropped to a square,
+// shrunk, and saved in this browser only (IndexedDB: too big for localStorage). Nothing is uploaded.
+const PIN_SIZES = [28, 36, 44, 56, 72]; // icon sizes on screen, in CSS pixels
+const PIN_PX = 160; // saved pictures: a square this many pixels a side (sharp up to the biggest icon on a 2x screen)
+const PIN_BG = '#121b23'; // behind see-through parts of a picture
+const PINS = new Map(); // country id -> { img, tile } (tile: the icon pre-drawn at the current size)
+const PASTE_KEY = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '') ? '⌘V' : 'Ctrl+V';
+let pinRects = []; // where each icon was drawn last, for clicks: { id, x0, y0, x1, y1 }, top one last
+
+const pinDb = (() => {
+	let opening = null;
+	const open = () =>
+		opening ||
+		(opening = new Promise((resolve, reject) => {
+			if (!window.indexedDB) return reject(new Error('no IndexedDB'));
+			const rq = indexedDB.open('ss1.capital-atlas', 1);
+			rq.onupgradeneeded = () => rq.result.createObjectStore('images');
+			rq.onsuccess = () => resolve(rq.result);
+			rq.onerror = () => reject(rq.error);
+		}).catch((err) => {
+			opening = null;
+			throw err;
+		}));
+	const run = (mode, fn) =>
+		open().then(
+			(db) =>
+				new Promise((resolve, reject) => {
+					const tx = db.transaction('images', mode);
+					const out = fn(tx.objectStore('images'));
+					tx.oncomplete = () => resolve(out);
+					tx.onerror = tx.onabort = () => reject(tx.error);
+				}),
+		);
+	return {
+		all: () =>
+			run('readonly', (st) => {
+				const rows = [];
+				st.openCursor().onsuccess = (e) => {
+					const cur = e.target.result;
+					if (!cur) return;
+					rows.push([cur.key, cur.value]);
+					cur.continue();
+				};
+				return rows;
+			}),
+		put: (id, blob) => run('readwrite', (st) => st.put(blob, id)),
+		del: (id) => run('readwrite', (st) => st.delete(id)),
+	};
+})();
+
+function blobImage(blob) {
+	return new Promise((resolve, reject) => {
+		const url = URL.createObjectURL(blob);
+		const img = new Image();
+		img.onload = () => {
+			URL.revokeObjectURL(url);
+			resolve(img);
+		};
+		img.onerror = () => {
+			URL.revokeObjectURL(url);
+			reject(new Error('not an image'));
+		};
+		img.src = url;
+	});
+}
+// An image from a web address (dragged in, or an <img> in pasted HTML). Most sites don't allow
+// reading their pictures from another site, so this often fails; copying the image itself works.
+function urlImage(url) {
+	return new Promise((resolve, reject) => {
+		const img = new Image();
+		if (!/^data:/i.test(url)) img.crossOrigin = 'anonymous';
+		img.referrerPolicy = 'no-referrer';
+		img.onload = () => resolve(img);
+		img.onerror = () => reject(new Error('not an image'));
+		img.src = url;
+	});
+}
+// The middle square of a picture, shrunk to PIN_PX and saved as WebP (JPEG where WebP can't be written)
+function squareBlob(img) {
+	const w = img.naturalWidth || img.width || 300, h = img.naturalHeight || img.height || 300;
+	const side = Math.min(w, h);
+	// halve in steps on the way down, so big photos stay smooth instead of grainy
+	let cv = document.createElement('canvas'), size = side;
+	while (size / 2 >= PIN_PX * 1.5) size = Math.round(size / 2);
+	cv.width = cv.height = Math.max(PIN_PX, size);
+	let ctx = cv.getContext('2d');
+	ctx.imageSmoothingQuality = 'high';
+	ctx.drawImage(img, (w - side) / 2, (h - side) / 2, side, side, 0, 0, cv.width, cv.height);
+	while (cv.width / 2 >= PIN_PX) {
+		const half = document.createElement('canvas');
+		half.width = half.height = Math.round(cv.width / 2);
+		const hc = half.getContext('2d');
+		hc.imageSmoothingQuality = 'high';
+		hc.drawImage(cv, 0, 0, half.width, half.height);
+		cv = half;
+	}
+	const out = document.createElement('canvas');
+	out.width = out.height = PIN_PX;
+	ctx = out.getContext('2d');
+	ctx.fillStyle = PIN_BG;
+	ctx.fillRect(0, 0, PIN_PX, PIN_PX);
+	ctx.imageSmoothingQuality = 'high';
+	ctx.drawImage(cv, 0, 0, PIN_PX, PIN_PX);
+	const encode = (type, q) => new Promise((resolve) => out.toBlob(resolve, type, q));
+	return encode('image/webp', 0.86).then((b) => (b && b.type === 'image/webp' ? b : encode('image/jpeg', 0.88)));
+}
+// The picture in a paste or a drop: an image file first, then an <img> in copied HTML, then a link
+function imageFromTransfer(dt) {
+	if (!dt) return null;
+	let file = [...(dt.files || [])].find((f) => /^image\//.test(f.type));
+	if (!file) for (const it of dt.items || []) if (!file && it.kind === 'file' && /^image\//.test(it.type)) file = it.getAsFile();
+	if (file) return blobImage(file);
+	const html = dt.getData('text/html') || '';
+	const m = html.match(/<img[^>]+src\s*=\s*["']([^"']+)["']/i);
+	const link = (s) => String(s || '').split(/\r?\n/).map((l) => l.trim()).find((l) => /^(https?:|data:image\/)/i.test(l));
+	const url = (m && m[1].replace(/&amp;/g, '&')) || link(dt.getData('text/uri-list')) || link(dt.getData('text/plain'));
+	return url ? urlImage(url) : null;
+}
+
+let pinsLoading = null;
+function loadPins() {
+	if (!pinsLoading) {
+		pinsLoading = pinDb
+			.all()
+			.then(async (rows) => {
+				for (const [id, blob] of rows) {
+					if (!BY_ID.has(id) || PINS.has(id)) continue;
+					try {
+						PINS.set(id, { img: await blobImage(blob), tile: null });
+					} catch (e) {
+						/* an unreadable picture: leave it out */
+					}
+				}
+			})
+			.catch(() => {})
+			.then(() => {
+				renderPrompt();
+				invalidate();
+			});
+	}
+	return pinsLoading;
+}
+const selectedPinId = () => (state.pins && state.mode === 'study' && study && study.items.length ? study.items[study.index].id : null);
+// Pin a picture (a promise of a loaded <img>) to a country: the one selected when the paste or drop happened
+async function pinPicture(source, id = selectedPinId()) {
+	const c = id && BY_ID.get(id);
+	if (!c || !source) {
+		if (source) source.catch(() => {});
+		toast(c ? 'That wasn’t an image.' : 'Pick a country first.', 'bad');
+		return;
+	}
+	let blob, img;
+	try {
+		blob = await squareBlob(await source);
+		img = await blobImage(blob);
+	} catch (err) {
+		toast('Couldn’t use that image. On Google Images, right-click the picture, choose Copy image, then paste.', 'bad');
+		return;
+	}
+	const replaced = PINS.has(c.id);
+	PINS.set(c.id, { img, tile: null });
+	toast(replaced ? `New image for ${c.name}.` : `Image pinned to ${c.name}.`, 'ok');
+	pinDb.put(c.id, blob).catch(() => toast('This browser won’t save images (a private window?), so it’ll be gone after a reload.', 'bad'));
+	renderPrompt();
+	invalidate();
+}
+function removePin(id = selectedPinId()) {
+	if (!id || !PINS.has(id)) return;
+	PINS.delete(id);
+	pinDb.del(id).catch(() => {});
+	toast(`Image removed from ${BY_ID.get(id).name}.`);
+	renderPrompt();
+	invalidate();
+}
+async function pasteFromButton() {
+	const id = selectedPinId();
+	if (!id) return toast('Pick a country first.', 'bad');
+	if (!navigator.clipboard || !navigator.clipboard.read) return toast(`Copy an image, then press ${PASTE_KEY} here.`);
+	let items;
+	try {
+		items = await navigator.clipboard.read();
+	} catch (err) {
+		return toast(`The browser didn’t let this page read the clipboard. Press ${PASTE_KEY} instead.`, 'bad');
+	}
+	for (const it of items) {
+		const type = it.types.find((t) => /^image\//.test(t));
+		if (type) return pinPicture(it.getType(type).then(blobImage), id);
+	}
+	for (const it of items) {
+		if (!it.types.includes('text/html')) continue;
+		const m = (await (await it.getType('text/html')).text()).match(/<img[^>]+src\s*=\s*["']([^"']+)["']/i);
+		if (m) return pinPicture(urlImage(m[1].replace(/&amp;/g, '&')), id);
+	}
+	toast('There’s no image on the clipboard. Right-click a picture and choose Copy image first.', 'bad');
+}
+function setPins(on) {
+	if (on === state.pins) return;
+	const go = () => {
+		state.pins = on;
+		store.set('imageMode', on);
+		if (on) {
+			loadPins();
+			if (state.mode !== 'study') setMode('study');
+			else renderAll();
+			toast(narrow() ? 'Images: tap a country, then paste or upload a picture for it.' : `Images: pick a country, then paste a picture onto it (${PASTE_KEY}). Press I to leave.`);
+		} else {
+			renderAll();
+			toast('Images off.');
+		}
+	};
+	if (on) guardTest('Switching to Images', go);
+	else go();
+}
+function setPinSize(d) {
+	const n = Math.min(PIN_SIZES.length - 1, Math.max(0, state.pinSize + d));
+	if (n === state.pinSize) return;
+	state.pinSize = n;
+	store.set('imageSize', n);
+	renderPinBar();
+	invalidate();
+}
+// The buttons under the prompt card (not in the clean recording view: Ctrl+V still works there)
+function renderPinBar() {
+	const id = selectedPinId();
+	$('pinBar').hidden = !id || state.clean;
+	$('pinRemove').hidden = !(id && PINS.has(id));
+	$('pinSmaller').disabled = state.pinSize === 0;
+	$('pinBigger').disabled = state.pinSize === PIN_SIZES.length - 1;
+}
+$('pinPaste').addEventListener('click', pasteFromButton);
+$('pinUpload').addEventListener('click', () => $('pinFile').click());
+$('pinFile').addEventListener('change', () => {
+	const f = $('pinFile').files[0];
+	$('pinFile').value = '';
+	if (f) pinPicture(blobImage(f));
+});
+$('pinRemove').addEventListener('click', () => removePin());
+$('pinSmaller').addEventListener('click', () => setPinSize(-1));
+$('pinBigger').addEventListener('click', () => setPinSize(1));
+document.addEventListener('paste', (e) => {
+	if (!state.pins || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable || pendingConfirm) return;
+	const source = imageFromTransfer(e.clipboardData);
+	e.preventDefault();
+	if (!source) return toast('There’s no image on the clipboard. Right-click a picture and choose Copy image first.', 'bad');
+	pinPicture(source);
+});
+// Drag a picture onto a country (from your computer, or from another page where the site allows it)
+window.addEventListener('dragover', (e) => {
+	if (!state.pins) return;
+	e.preventDefault();
+	e.dataTransfer.dropEffect = 'copy';
+	const [x, y] = localXY(e);
+	hoverAt(x, y);
+});
+window.addEventListener('drop', (e) => {
+	if (!state.pins) return;
+	e.preventDefault();
+	const [x, y] = localXY(e);
+	const hit = proj && pickAt(x, y);
+	let id = selectedPinId();
+	if (hit && hit.id && study) {
+		const at = study.items.findIndex((c) => c.id === hit.id);
+		if (at < 0) return toast(`${BY_ID.get(hit.id).name} is outside ${regionLabel()}.`, 'bad');
+		study.index = at;
+		showStudyItem(false);
+		id = hit.id;
+	}
+	pinPicture(imageFromTransfer(e.dataTransfer), id);
+});
+
+// Where a country's picture goes: the middle of its biggest piece of land (the point farthest from
+// any coast or border, so it lands inside even for curved countries like Croatia), or the capital for
+// countries too small to see, where their ring is.
+const PIN_AT = new Map(); // id -> { feats, ll }
+function iconLL(c) {
+	const m = META[c.fi];
+	if (m.small) return [c.lon, c.lat];
+	const feats = LOD.mid || LOD.low || LOD.xlow; // detailed enough, and quick to search
+	const known = PIN_AT.get(c.id);
+	if (known && known.feats === feats) return known.ll;
+	const ll = landMiddle(feats[c.fi].geometry) || [c.lon, c.lat];
+	PIN_AT.set(c.id, { feats, ll });
+	return ll;
+}
+function landMiddle(g) {
+	const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+	let best = null;
+	for (const poly of polys) {
+		// flatten around the piece's own latitude, unwrapping pieces that cross the date line
+		const lons = poly[0].map((q) => q[0]);
+		const wrap = Math.max(...lons) - Math.min(...lons) > 180;
+		const lats = poly[0].map((q) => q[1]);
+		const k = Math.cos(((Math.min(...lats) + Math.max(...lats)) / 2) * DEG);
+		const rings = poly.map((r) => r.map(([lon, lat]) => [(wrap && lon < 0 ? lon + 360 : lon) * k, lat]));
+		let a = 0;
+		const o = rings[0];
+		for (let i = 0, j = o.length - 1; i < o.length; j = i++) a += (o[j][0] - o[i][0]) * (o[j][1] + o[i][1]);
+		a = Math.abs(a) / 2;
+		if (!best || a > best.a) best = { a, rings, k };
+	}
+	if (!best || !best.a) return null;
+	const [x, y] = farthestInside(best.rings);
+	let lon = x / best.k;
+	if (lon > 180) lon -= 360;
+	return [lon, y];
+}
+// The "pole of inaccessibility" (Mapbox's polylabel method): split the shape's box into squares,
+// keep splitting the ones that could still hold a point farther from the edge than the best so far
+function farthestInside(rings) {
+	let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+	for (const [x, y] of rings[0]) {
+		x0 = Math.min(x0, x);
+		y0 = Math.min(y0, y);
+		x1 = Math.max(x1, x);
+		y1 = Math.max(y1, y);
+	}
+	const w = x1 - x0, h = y1 - y0, cell = Math.min(w, h);
+	if (!cell) return [x0, y0];
+	const precision = Math.max(w, h) / 250;
+	// distance to the nearest edge, negative outside the shape
+	const edgeDist = (px, py) => {
+		let inside = false, d2 = Infinity;
+		for (const r of rings) {
+			for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+				const [ax, ay] = r[i], [bx, by] = r[j];
+				if (ay > py !== by > py && px < ((bx - ax) * (py - ay)) / (by - ay) + ax) inside = !inside;
+				let dx = bx - ax, dy = by - ay, t = 0;
+				if (dx || dy) t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+				dx = ax + t * dx - px;
+				dy = ay + t * dy - py;
+				d2 = Math.min(d2, dx * dx + dy * dy);
+			}
+		}
+		return (inside ? 1 : -1) * Math.sqrt(d2);
+	};
+	const mk = (x, y, half) => {
+		const d = edgeDist(x, y);
+		return { x, y, half, d, max: d + half * Math.SQRT2 };
+	};
+	// a small max-heap on `max`
+	const heap = [];
+	const push = (c) => {
+		heap.push(c);
+		for (let i = heap.length - 1; i > 0; ) {
+			const p = (i - 1) >> 1;
+			if (heap[p].max >= heap[i].max) break;
+			[heap[p], heap[i]] = [heap[i], heap[p]];
+			i = p;
+		}
+	};
+	const pop = () => {
+		const top = heap[0], last = heap.pop();
+		if (heap.length) {
+			heap[0] = last;
+			for (let i = 0; ; ) {
+				const l = 2 * i + 1, r = l + 1;
+				let m = i;
+				if (l < heap.length && heap[l].max > heap[m].max) m = l;
+				if (r < heap.length && heap[r].max > heap[m].max) m = r;
+				if (m === i) break;
+				[heap[m], heap[i]] = [heap[i], heap[m]];
+				i = m;
+			}
+		}
+		return top;
+	};
+	for (let x = x0; x < x1; x += cell) for (let y = y0; y < y1; y += cell) push(mk(x + cell / 2, y + cell / 2, cell / 2));
+	let best = mk(x0 + w / 2, y0 + h / 2, 0);
+	for (let n = 0; heap.length && n < 4000; n++) {
+		const c = pop();
+		if (c.d > best.d) best = c;
+		if (c.max - best.d <= precision) continue;
+		const q = c.half / 2;
+		push(mk(c.x - q, c.y - q, q));
+		push(mk(c.x + q, c.y - q, q));
+		push(mk(c.x - q, c.y + q, q));
+		push(mk(c.x + q, c.y + q, q));
+	}
+	return [best.x, best.y];
+}
+// The pictures on screen: countries in the region you're studying that have one
+function pinSpots(p) {
+	const out = [];
+	if (!PINS.size) return out;
+	for (const c of COUNTRIES) {
+		if (c.fi == null || !PINS.has(c.id) || !inScope(c)) continue;
+		const pt = projectPoint(p, iconLL(c));
+		if (pt) out.push({ c, x: pt[0], y: pt[1] });
+	}
+	return out;
+}
+function roundRect(ctx, x, y, w, h, r) {
+	ctx.beginPath();
+	ctx.moveTo(x + r, y);
+	ctx.arcTo(x + w, y, x + w, y + h, r);
+	ctx.arcTo(x + w, y + h, x, y + h, r);
+	ctx.arcTo(x, y + h, x, y, r);
+	ctx.arcTo(x, y, x + w, y, r);
+	ctx.closePath();
+}
+// A country's icon, drawn once at the current size (and redrawn when the size changes)
+function pinTile(pin, s) {
+	const px = Math.round(s * dpr);
+	if (pin.tile && pin.tile.px === px) return pin.tile.cv;
+	const cv = document.createElement('canvas');
+	cv.width = cv.height = px;
+	const t = cv.getContext('2d');
+	roundRect(t, 0, 0, px, px, px * 0.22);
+	t.clip();
+	t.imageSmoothingQuality = 'high';
+	t.drawImage(pin.img, 0, 0, px, px);
+	pin.tile = { px, cv };
+	return cv;
+}
+function drawPins(ctx, p, selId) {
+	const s = PIN_SIZES[state.pinSize], half = s / 2, r = s * 0.22;
+	const spots = pinSpots(p).sort((a, b) => (a.c.id === selId) - (b.c.id === selId)); // the selected one on top
+	pinRects = [];
+	for (const { c, x, y } of spots) {
+		const x0 = x - half, y0 = y - half;
+		ctx.drawImage(pinTile(PINS.get(c.id), s), x0, y0, s, s);
+		roundRect(ctx, x0, y0, s, s, r);
+		ctx.lineWidth = 3;
+		ctx.strokeStyle = COL.pinEdge;
+		ctx.stroke();
+		ctx.lineWidth = c.id === selId ? 2 : 1.2;
+		ctx.strokeStyle = c.id === selId ? COL.target : COL.pinRing;
+		ctx.stroke();
+		pinRects.push({ id: c.id, x0, y0, x1: x0 + s, y1: y0 + s });
+	}
+	// the selected country without a picture yet: a dashed square where one will go
+	const c = selId && !PINS.has(selId) && BY_ID.get(selId);
+	const pt = c && c.fi != null && projectPoint(p, iconLL(c));
+	if (!pt) return;
+	const x0 = pt[0] - half, y0 = pt[1] - half;
+	roundRect(ctx, x0, y0, s, s, r);
+	ctx.fillStyle = COL.pinEmpty;
+	ctx.fill();
+	ctx.setLineDash([4, 3]);
+	ctx.lineWidth = 1.4;
+	ctx.strokeStyle = COL.target;
+	ctx.stroke();
+	ctx.setLineDash([]);
+	const arm = Math.max(4, s * 0.16);
+	ctx.beginPath();
+	ctx.moveTo(pt[0] - arm, pt[1]);
+	ctx.lineTo(pt[0] + arm, pt[1]);
+	ctx.moveTo(pt[0], pt[1] - arm);
+	ctx.lineTo(pt[0], pt[1] + arm);
+	ctx.lineWidth = 1.6;
+	ctx.stroke();
 }
 
 /* ---------------- quiz (practice / test) ---------------- */
@@ -1430,7 +1925,7 @@ function renderPrompt() {
 }
 // Show the panel under the prompt card when it has something in it
 function syncMore() {
-	const any = !$('pTip').hidden || !$('answerForm').hidden || !$('review').hidden;
+	const any = !$('pTip').hidden || !$('answerForm').hidden || !$('review').hidden || !$('pinBar').hidden;
 	$('pMore').hidden = !any;
 	$('prompt').classList.toggle('has-more', any);
 }
@@ -1441,18 +1936,22 @@ function renderPromptText() {
 	$('review').hidden = !review;
 	$('pBarWrap').classList.toggle('is-off', !!review);
 	renderDock();
+	renderPinBar();
 	if (state.mode === 'study') {
 		if (!study || !study.items.length) {
-			$('pEyebrow').textContent = 'Study';
+			$('pEyebrow').textContent = state.pins ? 'Images' : 'Study';
 			$('pName').textContent = 'Nothing to study here';
 			$('pMeta').textContent = reg;
 			setTip('');
 			return;
 		}
 		const c = study.items[study.index];
-		$('pEyebrow').textContent = `Study · ${reg}`;
+		$('pEyebrow').textContent = `${state.pins ? 'Images' : 'Study'} · ${reg}`;
 		$('pName').textContent = `${c.name}: ${c.capital}`;
-		$('pMeta').textContent = `${study.index + 1} of ${study.items.length} · ← → to move, or click any country`;
+		if (state.pins) {
+			const have = study.items.filter((x) => PINS.has(x.id)).length;
+			$('pMeta').textContent = `${study.index + 1} of ${study.items.length} · ${have} with images${narrow() ? '' : ` · ${PASTE_KEY} pastes onto this one`}`;
+		} else $('pMeta').textContent = `${study.index + 1} of ${study.items.length} · ← → to move, or click any country`;
 		setTip(c.note || '');
 		$('pBar').style.width = ((100 * (study.index + 1)) / study.items.length).toFixed(1) + '%';
 		return;
@@ -1588,10 +2087,13 @@ const FORMAT_HINT = {
 	type: 'A country lights up; type its capital. Accents don’t matter, and a small spelling slip still counts.',
 };
 function renderSegs() {
-	for (const [id, v] of [['modeSeg', state.mode], ['formatSeg', state.format], ['viewSeg', state.view]]) {
+	$('imagesModeBtn').hidden = !state.pins; // the hidden mode shows up in the bar only while it's on
+	for (const [id, v] of [['modeSeg', state.pins ? 'images' : state.mode], ['formatSeg', state.format], ['viewSeg', state.view]]) {
 		for (const b of $(id).querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === v));
 	}
-	$('modeHint').textContent = MODE_HINT[state.mode];
+	$('modeHint').textContent = state.pins
+		? `Pick a country, then paste a picture onto it (${PASTE_KEY}), upload one, or drag one onto the country. Pictures stay in this browser only. I turns this mode off.`
+		: MODE_HINT[state.mode];
 	$('formatHint').textContent = FORMAT_HINT[state.format];
 	for (const b of $('levelSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === state.level));
 	$('levelHint').textContent = LEVEL_HINT[state.format][state.level];
@@ -1645,6 +2147,10 @@ function renderAll() {
 function setMode(m, restart = true) {
 	state.mode = m;
 	store.set('mode', m);
+	if (m !== 'study' && state.pins) {
+		state.pins = false;
+		store.set('imageMode', false);
+	}
 	renderSegs();
 	renderBest();
 	if (restart) startSession();
@@ -1670,8 +2176,11 @@ function setView(v) {
 }
 $('modeSeg').addEventListener('click', (e) => {
 	const b = e.target.closest('button[data-v]');
-	if (!b || b.dataset.v === state.mode) return;
-	guardTest('Changing mode', () => setMode(b.dataset.v));
+	const v = b && b.dataset.v;
+	if (!v || v === (state.pins ? 'images' : state.mode)) return;
+	if (v === 'images') return setPins(true);
+	if (v === 'study') return setPins(false); // from Images back to plain Study
+	guardTest('Changing mode', () => setMode(v));
 });
 $('formatSeg').addEventListener('click', (e) => {
 	const b = e.target.closest('button[data-v]');
@@ -1777,6 +2286,7 @@ function setClean(on) {
 	state.clean = on;
 	document.body.classList.toggle('clean', on);
 	setSheet(null);
+	renderPrompt(); // the Images buttons hide in the clean view
 	resize();
 }
 $('cleanBtn').addEventListener('click', () => setClean(true));
@@ -1849,6 +2359,7 @@ document.addEventListener('keydown', (e) => {
 	else if (e.key === 'c' || e.key === 'C') setClean(!state.clean);
 	else if (e.key === 'r' || e.key === 'R') frameRegion();
 	else if (e.key === 'l' || e.key === 'L') setNames(!state.names, true);
+	else if (e.key === 'i' || e.key === 'I') setPins(!state.pins); // the hidden Images mode (not listed in the key hints)
 	else return;
 	e.preventDefault();
 });
@@ -2166,6 +2677,7 @@ async function boot() {
 	updateProj();
 	$('loading').hidden = true;
 	startSession();
+	if (state.pins) loadPins();
 	loadWater('low').catch(() => {});
 	loadSeas().catch(() => {});
 	// more detail in the background
@@ -2185,6 +2697,8 @@ async function boot() {
 			state, cam, COUNTRIES, BY_ID, META, LOD, pickAt, setView, setMode, setFormat, startSession, submitAnswer, onMapClick, frameArea,
 			parseVoice, checkAnswer, free, getSession: () => session, getStudy: () => study, getReview: () => review, project: (ll) => projectPoint(proj, ll),
 			camForCountry, screen, geoContains, bestFeats, waterAt, WATER, webZoom, getHoverIdx: () => hoverIdx,
+			PINS, iconLL, setPins, removePin, setPinSize, pinRects: () => pinRects, loadPins, landMiddle,
+			pinFromUrl: (url, id) => pinPicture(urlImage(url), id),
 			prof: (c, fast) => {
 				Object.assign(cam, c);
 				constrain();
