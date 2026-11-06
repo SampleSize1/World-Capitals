@@ -1138,7 +1138,7 @@ function showCountry(c, forTyping) {
 // shrunk, and saved in this browser only (IndexedDB: too big for localStorage). Nothing is uploaded.
 const PIN_SIZES = [28, 36, 44, 56, 72]; // icon sizes on screen, in CSS pixels
 const PIN_PX = 160; // saved pictures: a square this many pixels a side (sharp up to the biggest icon on a 2x screen)
-const PIN_BG = '#121b23'; // behind see-through parts of a picture
+const PIN_BG = '#ffffff'; // behind see-through parts of a picture (a PNG cut-out sits on white, like on most image sites)
 const PINS = new Map(); // country id -> { img, tile } (tile: the icon pre-drawn at the current size)
 const PASTE_KEY = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '') ? '⌘V' : 'Ctrl+V';
 let pinRects = []; // where each icon was drawn last, for clicks: { id, x0, y0, x1, y1 }, top one last
@@ -2179,7 +2179,7 @@ $('modeSeg').addEventListener('click', (e) => {
 	const v = b && b.dataset.v;
 	if (!v || v === (state.pins ? 'images' : state.mode)) return;
 	if (v === 'images') return setPins(true);
-	if (v === 'study') return setPins(false); // from Images back to plain Study
+	if (v === 'study' && state.pins) return setPins(false); // from Images back to plain Study (from Practice or Test, a normal switch)
 	guardTest('Changing mode', () => setMode(v));
 });
 $('formatSeg').addEventListener('click', (e) => {
