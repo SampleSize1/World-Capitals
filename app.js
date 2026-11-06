@@ -158,8 +158,9 @@ function editDistance(a, b) {
 		}
 	return d[m][n];
 }
-// -> { ok, note } or { ok: false, msg }. strict: spelling must be exact (accents, capitals and
-// punctuation still don't matter). keepSecret: a wrong answer's message doesn't give the answer away.
+// -> { ok, note } or { ok: false, msg }; a near miss in Easy is { ok: true, close: true, note } (half a point).
+// strict: spelling must be exact (accents, capitals and punctuation still don't matter).
+// keepSecret: a wrong answer's message doesn't give the answer away.
 function checkAnswer(c, typed, { strict = false, keepSecret = false } = {}) {
 	const t = norm(typed);
 	const forms = [c.capital, ...(c.alts || [])].map(norm);
@@ -169,7 +170,7 @@ function checkAnswer(c, typed, { strict = false, keepSecret = false } = {}) {
 	const other = CAPITAL_INDEX.get(t);
 	if (other && other !== c) return { ok: false, msg: `${other.capital} is the capital of ${other.name}.${tell}` };
 	const slack = strict ? 0 : t.length >= 8 ? 2 : t.length >= 5 ? 1 : 0;
-	if (slack && forms.some((f) => editDistance(t, f) <= slack)) return { ok: true, note: `Close enough: it’s spelled ${c.capital}.` };
+	if (slack && forms.some((f) => editDistance(t, f) <= slack)) return { ok: true, close: true, note: `Close: it’s spelled ${c.capital}. Half a point.` };
 	if (keepSecret) return { ok: false, msg: 'Not quite. Try again, skip it, or give up.' };
 	const near = strict && forms.some((f) => editDistance(t, f) <= (t.length >= 8 ? 2 : 1));
 	return { ok: false, msg: near ? `So close, but Hard needs the exact spelling: ${c.capital}.` : `${c.name}: ${c.capital}.` };
@@ -423,6 +424,8 @@ const COL = {
 	territory: '#384449',
 	okTint: '#86c39a',
 	badTint: '#d08a7c',
+	closeTint: '#e2c35c', // Easy typing: right but misspelled (half a point)
+	close: '#f5d04e',
 	border: 'rgba(9, 14, 19, 0.9)',
 	grat: 'rgba(111, 208, 232, 0.08)',
 	target: '#6fd0e8',
@@ -485,7 +488,7 @@ function landColor(m) {
 	if (!m.country) return COL.territory;
 	if (!inScope(m.country)) return COL.outScope;
 	const st = statusOf(m.id);
-	return st === 'ok' ? COL.okTint : st === 'bad' ? COL.badTint : COL.inScope;
+	return st === 'ok' ? COL.okTint : st === 'bad' ? COL.badTint : st === 'close' ? COL.closeTint : COL.inScope;
 }
 function drawBase() {
 	const t0 = performance.now(), p = proj, ctx = bctx;
@@ -866,7 +869,7 @@ function drawFx(now) {
 }
 function statusRingColor(id) {
 	const st = statusOf(id);
-	return st === 'ok' ? COL.ok : st === 'bad' ? COL.bad : COL.ring;
+	return st === 'ok' ? COL.ok : st === 'bad' ? COL.bad : st === 'close' ? COL.close : COL.ring;
 }
 function flash(id, kind) {
 	// Hard clicking: a click still flashes green or red and fades back, but a missed country's
@@ -1741,7 +1744,7 @@ function submitAnswer(text) {
 	}
 	session.attempts++;
 	$('answer').value = '';
-	if (res.ok) gotIt(cur, res.note);
+	if (res.ok) gotIt(cur, res.note, res.close);
 	else if (typeEasy()) {
 		// Easy: keep guessing; the first wrong guess counts against this country in practice history
 		toast(res.msg, 'bad');
@@ -1759,15 +1762,16 @@ function submitAnswer(text) {
 	}
 	renderStats();
 }
-function gotIt(cur, note) {
-	session.correct++;
+// close: right, but misspelled (Easy typing). It turns yellow and scores half a point.
+function gotIt(cur, note, close = false) {
+	session.correct += close ? 0.5 : 1;
 	session.streak++;
 	session.done++;
 	recordStat(cur.id, true);
-	session.result.set(cur.id, session.everMissed.has(cur.id) ? 'bad' : 'ok');
-	flash(cur.id, 'ok');
-	pulsePrompt('ok');
-	if (note) toast(note, 'ok');
+	session.result.set(cur.id, session.everMissed.has(cur.id) ? 'bad' : close ? 'close' : 'ok');
+	flash(cur.id, close ? 'close' : 'ok');
+	pulsePrompt(close ? 'close' : 'ok');
+	if (note) toast(note, close ? 'close' : 'ok');
 	else if (quiet()) toast('Correct.', 'ok');
 	else if (state.format === 'click') toast(`Correct, that’s ${cur.name}.`, 'ok');
 	session.busy = true;
@@ -1819,7 +1823,10 @@ function finishSession() {
 	session.current = null;
 	closeInput();
 	const ms = session.end - session.start;
-	const firstTry = session.total - session.everMissed.size;
+	// misspelled answers (yellow) count half
+	const statusOfItem = (c) => (session.everMissed.has(c.id) ? 'bad' : session.result.get(c.id) === 'close' ? 'close' : 'ok');
+	const closeCount = session.items.filter((c) => statusOfItem(c) === 'close').length;
+	const firstTry = session.total - session.everMissed.size - closeCount / 2;
 	const acc = session.attempts ? Math.round((100 * session.correct) / session.attempts) : 0;
 	const scoreNow = state.mode === 'test' ? session.correct : firstTry;
 	const all = store.get('best', {});
@@ -1829,11 +1836,12 @@ function finishSession() {
 		store.set('best', all);
 	}
 	const missedIds = session.items.filter((c) => session.everMissed.has(c.id)).map((c) => c.id);
-	review = {
-		status: new Map(session.items.map((c) => [c.id, session.everMissed.has(c.id) ? 'bad' : 'ok'])),
-		ok: scoreNow, bad: session.total - scoreNow, acc, ms, best: all[bestKey()], missedIds,
-	};
+	const status = new Map(session.items.map((c) => [c.id, statusOfItem(c)]));
+	const count = (st) => session.items.filter((c) => status.get(c.id) === st).length;
+	review = { status, score: scoreNow, ok: count('ok'), close: closeCount, bad: count('bad'), acc, ms, best: all[bestKey()], missedIds };
 	$('rOk').textContent = review.ok;
+	$('rClose').textContent = review.close;
+	$('rCloseKey').hidden = !review.close;
 	$('rBad').textContent = review.bad;
 	$('rOkLabel').textContent = state.mode === 'test' || typeEasy() ? 'correct' : 'first try';
 	$('rBadLabel').textContent = typeEasy() ? 'gave up' : state.mode === 'test' ? 'missed' : 'needed help';
@@ -1966,7 +1974,7 @@ function renderPromptText() {
 	}
 	if (review) {
 		$('pEyebrow').textContent = `${state.mode === 'test' ? 'Test complete' : 'Set learned'} · ${reg}`;
-		$('pName').textContent = `${review.ok} / ${session.total}`;
+		$('pName').textContent = `${review.score} / ${session.total}`;
 		$('pMeta').textContent = `${review.acc}% accuracy · ${fmtTime(review.ms)} · best ${review.best.score}/${review.best.total}`;
 		return;
 	}
@@ -1999,10 +2007,10 @@ function renderPromptText() {
 let promptTimer = 0;
 function pulsePrompt(kind) {
 	const pr = $('prompt');
-	pr.classList.remove('is-ok', 'is-bad');
-	pr.classList.add(kind === 'ok' ? 'is-ok' : 'is-bad');
+	pr.classList.remove('is-ok', 'is-bad', 'is-close');
+	pr.classList.add(kind === 'ok' ? 'is-ok' : kind === 'close' ? 'is-close' : 'is-bad');
 	clearTimeout(promptTimer);
-	promptTimer = setTimeout(() => pr.classList.remove('is-ok', 'is-bad'), 600);
+	promptTimer = setTimeout(() => pr.classList.remove('is-ok', 'is-bad', 'is-close'), 600);
 }
 function renderStats() {
 	const s = session;
@@ -2084,7 +2092,7 @@ const MODE_HINT = {
 };
 const FORMAT_HINT = {
 	click: 'You get a capital; click its country. Small countries have a ring you can click.',
-	type: 'A country lights up; type its capital. Accents don’t matter, and a small spelling slip still counts.',
+	type: 'A country lights up; type its capital. Accents don’t matter. On Easy, a small spelling slip counts as half a point.',
 };
 function renderSegs() {
 	$('imagesModeBtn').hidden = !state.pins; // the hidden mode shows up in the bar only while it's on
@@ -2109,7 +2117,7 @@ const LEVEL_HINT = {
 		hard: 'Clicks flash green or red, but nothing stays coloured until the end and wrong clicks aren’t named: each question stands on its own.',
 	},
 	type: {
-		easy: 'Guess as often as you like, skip back and forth between countries (Enter with nothing typed skips), or give up to see the answer.',
+		easy: 'Guess as often as you like, skip back and forth between countries (Enter with nothing typed skips), or give up to see the answer. A small misspelling turns the country yellow and counts as half a point.',
 		hard: 'One try per country, spelled right (accents and capitals don’t matter). Enter with nothing typed gives up.',
 	},
 };
