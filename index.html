@@ -15,7 +15,7 @@
 <meta name="description" content="Learn the capital of every country on a 3D globe or a flat map. Study, practice and timed tests by region, for all 197 countries. Free, by SampleSize_1.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=Montserrat:wght@800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
 /* Same look as Bone Atlas: a full-bleed stage (here a globe or a flat map), the prompt tag top-centre,
    regions and view controls down the left, settings on the right (bottom sheets on phones). */
@@ -78,7 +78,7 @@ body {
   gap: 12px;
 }
 .ui > * { pointer-events: auto; }
-@media (max-width: 1180px) { .brand .sub, .home .wordmark { display: none; } }
+@media (max-width: 1180px) { .brand .sub { display: none; } }
 
 /* ---------- brand ---------- */
 .brand {
@@ -90,10 +90,7 @@ body {
 .lockup { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .home { display: inline-flex; align-items: center; gap: 7px; color: var(--bone); text-decoration: none; flex: none; border-radius: 4px; }
 .home .logo-mark { height: 21px; width: auto; color: var(--scan); flex: none; transition: filter .15s; }
-.home .wordmark { font-family: "Montserrat", var(--f-display); font-weight: 800; font-size: 14.5px; letter-spacing: 0.02em; line-height: 1; }
 .home:hover .logo-mark { filter: brightness(1.2) drop-shadow(0 0 6px rgba(111, 208, 232, 0.45)); }
-.home:hover .wordmark { color: var(--fg); }
-.lockup .divider { width: 1px; height: 18px; background: var(--line-strong); flex: none; }
 .brand .mark { font-weight: 800; font-stretch: 125%; letter-spacing: -0.01em; font-size: 20px; color: var(--bone); line-height: 1; white-space: nowrap; }
 .brand .mark span { color: var(--scan); }
 .brand .sub { color: var(--muted); font-size: 12.5px; font-stretch: 90%; }
@@ -324,8 +321,6 @@ body.clean #cleanExit { display: inline-block; opacity: .55; }
   .brand { grid-column: 1; grid-row: 1; justify-self: center; }
   .lockup { gap: 9px; }
   .home .logo-mark { height: 16px; }
-  .home .wordmark { display: inline; font-size: 12.5px; }
-  .lockup .divider { height: 14px; }
   .brand .mark { font-size: 15px; }
   .prompt { grid-column: 1; grid-row: 2; align-self: stretch; padding: 10px 14px; z-index: 3; }
   .pmore { padding: 2px 14px 10px; }
@@ -379,16 +374,14 @@ body.clean #cleanExit { display: inline-block; opacity: .55; }
 <div class="ui">
   <div class="brand">
     <div class="lockup">
-      <!-- the SampleSize_1 logo ([1] mark + wordmark), drawn in this tool's blue; links back to the main site -->
+      <!-- the SampleSize_1 logo (the [1] mark), drawn in this tool's blue; links back to the main site -->
       <a class="home" id="homeLink" href="https://samplesize1.com/" aria-label="SampleSize_1 home page">
         <svg class="logo-mark" viewBox="516 555 968 888" fill="currentColor" aria-hidden="true" focusable="false">
           <path d="M516 555H772V670H663V1328H772V1443H516Z"></path>
           <path d="M1484 555H1227V670H1335V1328H1227V1443H1484Z"></path>
           <path d="M864 733L1092 698V1320H964V823L864 840Z"></path>
         </svg>
-        <span class="wordmark">SampleSize_1</span>
       </a>
-      <span class="divider" aria-hidden="true"></span>
       <div class="mark">WORLD <span>CAPITALS</span></div>
     </div>
     <div class="sub">Learn the capital of every country</div>
