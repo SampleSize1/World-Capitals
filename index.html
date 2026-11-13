@@ -313,6 +313,10 @@ body.clean .prompt { padding: 16px 26px; }
 #cleanExit { display: none; }
 body.clean #cleanExit { display: inline-block; opacity: .55; }
 
+/* ---------- spinning globe (S on the globe, not in the key hints): everything but the globe fades away ---------- */
+.ui, #leader { transition: opacity .4s; }
+body.spinning .ui, body.spinning .callout, body.spinning #leader { opacity: 0; visibility: hidden; transition: opacity .5s, visibility 0s .5s; }
+
 :focus-visible { outline: 2px solid var(--scan); outline-offset: 2px; }
 
 /* ---------- phones / narrow ---------- */

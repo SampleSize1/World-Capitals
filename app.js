@@ -181,6 +181,7 @@ const layout = { w: 1, h: 1, left: 0, right: 0, top: 0, bottom: 0 };
 const narrow = () => window.innerWidth <= 900;
 function measureInsets() {
 	const w = window.innerWidth, h = window.innerHeight, wide = w > 900;
+	if (spin.on) return { w, h, top: 0, bottom: 0, left: 0, right: 0 }; // the spinning globe has the whole screen
 	const vis = (el) => el && !el.hidden && el.offsetParent !== null;
 	let top = 0, bottom = 0, left = 0, right = 0;
 	for (const id of ['prompt', 'stats'].concat(wide ? [] : ['rail'])) {
@@ -203,6 +204,10 @@ function free() {
 /* ---------------- camera and projections ---------------- */
 // One camera for both views: the point in the middle of the free area, and a zoom (1 = whole world).
 const cam = { lon: 10, lat: 15, zoom: 1 };
+// The hidden spinning globe (see "spinning globe" below). level 1-3; speed eases toward SPIN_SPEEDS[level];
+// labels: capital id -> { a: how visible its name is, left: drawn left of the dot }
+const SPIN_SPEEDS = [0, 6, 15, 36]; // degrees a second: a turn a minute, every 24 s, every 10 s
+const spin = { on: false, level: 0, speed: 0, last: 0, fxLast: 0, back: null, labels: new Map() };
 let mapBase = 100;
 const baseScale = (view = state.view) => (view === 'globe' ? Math.min(free().fw, free().fh) * 0.46 : mapBase);
 function computeMapBase() {
@@ -458,12 +463,13 @@ function invalidate(base = true) {
 function frame(now) {
 	raf = 0;
 	stepFly(now);
+	stepSpin(now);
 	if (baseDirty && proj) {
 		baseDirty = false;
 		drawBase();
 	}
 	const busy = proj ? drawFx(now) : false;
-	if (fly || busy) raf = requestAnimationFrame(frame);
+	if (fly || busy || spin.on) raf = requestAnimationFrame(frame);
 }
 function viewCap(p) {
 	const f = free();
@@ -486,6 +492,7 @@ const quiet = () => state.level === 'hard' && state.format === 'click';
 const typeEasy = () => state.format === 'type' && state.level === 'easy' && state.mode !== 'study';
 function landColor(m) {
 	if (!m.country) return COL.territory;
+	if (spin.on) return COL.inScope; // the spinning globe shows every country, with no region or results
 	if (!inScope(m.country)) return COL.outScope;
 	const st = statusOf(m.id);
 	return st === 'ok' ? COL.okTint : st === 'bad' ? COL.badTint : st === 'close' ? COL.closeTint : COL.inScope;
@@ -535,8 +542,7 @@ function drawBase() {
 	ctx.lineWidth = borderWidth(p);
 	ctx.strokeStyle = COL.border;
 	for (const i of visibleIndices(p)) {
-		ctx.beginPath();
-		path(feats[i]);
+		if (!traceShape(ctx, p, path, feats[i], META[i])) continue;
 		ctx.fillStyle = landColor(META[i]);
 		ctx.fill();
 		ctx.stroke();
@@ -558,6 +564,48 @@ function drawBase() {
 		else if (ms < 8) slowDevice = false;
 	}
 	drawWaterLabels(p);
+}
+
+/* ---------- shapes at the globe's rim ---------- */
+// d3 trims each shape where the globe turns away, and now and then, at one angle, a shape near the
+// rim comes out inside out: it fills the whole globe instead of the sliver that shows. That was the
+// beige flicker while the globe turned. A drawn shape can't be bigger than the place itself (an
+// inside-out one is about the whole globe, many times bigger than even Russia looks), so one near the
+// rim that comes out more than twice its size is drawn again trimmed a degree or two inside the rim
+// (the same picture: at the rim a degree is less than a tenth of a pixel), or left out of that frame.
+// m: what the shape covers on the globe ({ c: centre, r: radius, area }, as in META and the lakes).
+const rimCheck = new WeakMap(); // projection -> { area: geoPath for areas, alts: the same view trimmed earlier }
+function rimFor(p) {
+	let fix = rimCheck.get(p);
+	if (!fix) rimCheck.set(p, (fix = { area: geoPath(p), alts: null }));
+	return fix;
+}
+const nearRim = (m) => geoDistance(m.c, [cam.lon, cam.lat]) + m.r > Math.PI / 2 - 0.35;
+const tooBig = (areaPath, f, m, p) => areaPath.area(f) > m.area * p.scale() ** 2 * 2 + 50;
+function insideOut(p, f, m) {
+	return state.view === 'globe' && nearRim(m) && tooBig(rimFor(p).area, f, m, p);
+}
+// Start a path for a shape (ctx.beginPath() and the outline); false if it's left out of this frame
+function traceShape(ctx, p, path, f, m) {
+	if (!insideOut(p, f, m)) {
+		ctx.beginPath();
+		path(f);
+		return true;
+	}
+	const fix = rimFor(p);
+	if (!fix.alts) {
+		fix.alts = [89, 87.5].map((deg) => {
+			const q = geoOrthographic().rotate(p.rotate()).translate(p.translate()).scale(p.scale()).clipAngle(deg).precision(0);
+			return { draw: geoPath(q), area: geoPath(q) };
+		});
+	}
+	for (const alt of fix.alts) {
+		if (tooBig(alt.area, f, m, p)) continue;
+		ctx.beginPath();
+		alt.draw.context(ctx)(f);
+		return true;
+	}
+	return false;
 }
 
 /* ---------- rivers and lakes ---------- */
@@ -632,7 +680,7 @@ function drawWater(ctx, path, p, near) {
 	const lakes = visibleWater(w.lakes, p, z, LAKE_LEAD).filter((f) => !near || near(f));
 	if (lakes.length) {
 		ctx.beginPath();
-		for (const f of lakes) path(f);
+		for (const f of lakes) if (!insideOut(p, f, f)) path(f);
 		ctx.fillStyle = COL.lake;
 		ctx.fill();
 		ctx.lineWidth = 0.6;
@@ -764,7 +812,7 @@ function projectPoint(p, ll) {
 }
 const isTiny = (m, p) => m.small && m.area * p.scale() * p.scale() < 250;
 function targetId() {
-	if (state.mode === 'study') return study && study.items.length ? study.items[study.index].id : null;
+	if (state.mode === 'study') return studySelected() ? study.items[study.index].id : null;
 	if (!session || !session.current || review) return null;
 	if (session.phase === 'reveal' || state.format === 'type') return session.current.id;
 	return null;
@@ -779,9 +827,7 @@ function fillCountry(ctx, path, id, fill, alpha, stroke) {
 		ctx.beginPath();
 		ctx.arc(s.x, s.y, RING, 0, TAU);
 		ctx.fill();
-	} else {
-		ctx.beginPath();
-		path((moving && drawnFeats ? drawnFeats : bestFeats())[c.fi]);
+	} else if (traceShape(ctx, proj, path, (moving && drawnFeats ? drawnFeats : bestFeats())[c.fi], META[c.fi])) {
 		ctx.fill();
 		if (stroke) {
 			ctx.globalAlpha = 1;
@@ -799,6 +845,11 @@ function drawFx(now) {
 	let busy = false;
 	// where each in-scope capital is on screen, and which countries are too small to click
 	screen.clear();
+	if (spin.on) {
+		pinRects = [];
+		drawSpinFx(ctx, p, now);
+		return true;
+	}
 	for (const c of COUNTRIES) {
 		if (!inScope(c) || c.fi == null) continue;
 		const pt = projectPoint(p, [c.lon, c.lat]);
@@ -806,12 +857,14 @@ function drawFx(now) {
 	}
 	// hover
 	if (hoverIdx != null && canHover && !moving) {
-		ctx.beginPath();
 		const s = hoverId && screen.get(hoverId);
-		if (s && s.tiny) ctx.arc(s.x, s.y, RING, 0, TAU);
-		else path(bestFeats()[hoverIdx]);
+		let drawn = true;
+		if (s && s.tiny) {
+			ctx.beginPath();
+			ctx.arc(s.x, s.y, RING, 0, TAU);
+		} else drawn = traceShape(ctx, p, path, bestFeats()[hoverIdx], META[hoverIdx]);
 		ctx.fillStyle = COL.hover;
-		ctx.fill();
+		if (drawn) ctx.fill();
 	}
 	// answer flashes fade out
 	flashes = flashes.filter((fl) => now - fl.t0 < 900);
@@ -1044,7 +1097,7 @@ function endPointer(e) {
 	pointers.delete(e.pointerId);
 	if (pointers.size === 0) {
 		$('stage').classList.remove('dragging');
-		if (drag && !wasDrag && e.type === 'pointerup') onMapClick(pickAt(x, y));
+		if (drag && !wasDrag && e.type === 'pointerup' && !spin.on) onMapClick(pickAt(x, y)); // the spinning globe is only for looking at
 		drag = null;
 	}
 }
@@ -1065,7 +1118,7 @@ mapCv.addEventListener(
 );
 let hoverRaf = 0;
 function hoverAt(x, y) {
-	if (!canHover || !proj) return;
+	if (!canHover || !proj || spin.on) return;
 	cancelAnimationFrame(hoverRaf);
 	hoverRaf = requestAnimationFrame(() => {
 		const hit = pickAt(x, y);
@@ -1086,7 +1139,7 @@ let study = null;
 function startStudy(selectId) {
 	const items = scopeCountries().sort((a, b) => a.name.localeCompare(b.name));
 	const at = items.findIndex((c) => c.id === selectId);
-	study = { items, index: Math.max(0, at) };
+	study = { items, index: Math.max(0, at), cleared: false };
 	showStudyItem(false);
 }
 function showStudyItem(move) {
@@ -1095,6 +1148,7 @@ function showStudyItem(move) {
 		renderPrompt();
 		return;
 	}
+	study.cleared = false;
 	const c = study.items[study.index];
 	setCallout(c.id, c.capital, c.name);
 	if (move) showCountry(c, false);
@@ -1103,9 +1157,20 @@ function showStudyItem(move) {
 }
 function studyStep(d) {
 	if (state.mode !== 'study' || !study || !study.items.length) return;
+	// after Esc, → brings back the country you were on (and ← goes to the one before it)
+	if (study.cleared && d > 0) d = 0;
 	study.index = (study.index + d + study.items.length) % study.items.length;
 	showStudyItem(true);
 }
+// Esc in Study (as in the 3D atlases): nothing is selected, the prompt shows the region, and the
+// arrows pick up where you were
+function clearStudySelection() {
+	study.cleared = true;
+	setCallout(null);
+	renderPrompt();
+	invalidate(false);
+}
+const studySelected = () => state.mode === 'study' && !!study && study.items.length > 0 && !study.cleared;
 function studyPick(hit) {
 	if (!hit) return;
 	if (!hit.id) return toastPlace(hit.i);
@@ -1279,7 +1344,7 @@ function loadPins() {
 	}
 	return pinsLoading;
 }
-const selectedPinId = () => (state.pins && state.mode === 'study' && study && study.items.length ? study.items[study.index].id : null);
+const selectedPinId = () => (state.pins && studySelected() ? study.items[study.index].id : null);
 // Pin a picture (a promise of a loaded <img>) to a country: the one selected when the paste or drop happened
 async function pinPicture(source, id = selectedPinId()) {
 	const c = id && BY_ID.get(id);
@@ -1953,8 +2018,14 @@ function renderPromptText() {
 			setTip('');
 			return;
 		}
-		const c = study.items[study.index];
 		$('pEyebrow').textContent = `${state.pins ? 'Images' : 'Study'} · ${reg}`;
+		if (study.cleared) {
+			$('pName').textContent = 'Pick a country';
+			$('pMeta').textContent = `${study.items.length} countries · click one, or ← → to carry on`;
+			setTip('');
+			return;
+		}
+		const c = study.items[study.index];
 		$('pName').textContent = `${c.name}: ${c.capital}`;
 		if (state.pins) {
 			const have = study.items.filter((x) => PINS.has(x.id)).length;
@@ -2109,7 +2180,7 @@ function renderSegs() {
 	$('searchBox').hidden = state.mode !== 'study';
 	renderDock();
 	$('keysHint').innerHTML =
-		'<kbd>←</kbd><kbd>→</kbd> previous / next · <kbd>1</kbd>–<kbd>0</kbd> zoom · <kbd>+</kbd><kbd>−</kbd> zoom in / out · <kbd>Esc</kbd> back to the region · <kbd>G</kbd> globe / flat map · <kbd>V</kbd> voice · <kbd>L</kbd> water names · <kbd>C</kbd> clean view';
+		'<kbd>←</kbd><kbd>→</kbd> previous / next · <kbd>1</kbd>–<kbd>0</kbd> zoom · <kbd>+</kbd><kbd>−</kbd> zoom in / out · <kbd>Esc</kbd> deselect, then back to the region ·<kbd>G</kbd> globe / flat map · <kbd>V</kbd> voice · <kbd>L</kbd> water names · <kbd>C</kbd> clean view';
 }
 const LEVEL_HINT = {
 	click: {
@@ -2340,6 +2411,140 @@ $('homeLink').addEventListener('click', (e) => {
 	});
 });
 
+/* ---------------- spinning globe (hidden) ---------------- */
+// S on the globe: everything but the globe fades away, the globe tilts to show the north (where most
+// capitals are) and turns on its own the way the Earth does, every capital marked and named where
+// there's room. S again goes faster (three speeds, then back to the first); Esc stops it and puts the
+// view back. You can still drag and zoom; clicks don't select anything. Not listed in the key hints.
+function spinKey() {
+	if (spin.on) {
+		spin.level = (spin.level % 3) + 1;
+		return;
+	}
+	if (state.view !== 'globe' || !proj) return;
+	if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+	spin.on = true;
+	spin.level = 1;
+	spin.speed = 0;
+	spin.last = spin.fxLast = 0;
+	spin.labels.clear();
+	spin.back = { cam: { ...cam }, zoomArea: state.zoomArea };
+	setSheet(null);
+	setHover(null);
+	document.body.classList.add('spinning');
+	keepGlobeSize(resize); // the globe gets the whole screen
+	flyTo({ lon: cam.lon, lat: 20, zoom: 0.92 }, 1400);
+}
+function stopSpin() {
+	if (!spin.on) return;
+	spin.on = false;
+	document.body.classList.remove('spinning');
+	keepGlobeSize(resize);
+	flyTo(spin.back.cam, 1000);
+	state.zoomArea = spin.back.zoomArea;
+	renderZoom();
+}
+// Give the globe more or less of the screen without it jumping in size
+function keepGlobeSize(fn) {
+	const s = baseScale() * cam.zoom;
+	fn();
+	cam.zoom = s / baseScale();
+	constrain();
+	updateProj();
+}
+// One frame of the turn, eased between speeds. It waits while the camera flies in.
+function stepSpin(now) {
+	if (!spin.on) return;
+	const dt = spin.last ? Math.min(0.1, (now - spin.last) / 1000) : 0;
+	spin.last = now;
+	if (fly) return;
+	spin.speed += (SPIN_SPEEDS[spin.level] - spin.speed) * Math.min(1, dt * 1.2);
+	cam.lon -= spin.speed * dt; // west to east, like the Earth
+	constrain();
+	updateProj();
+	interacting(); // the map counts as moving: no water names, and less detail on slow devices
+	baseDirty = true;
+}
+// Every capital on the near side, fading toward the rim, and as many names as fit. Names already
+// showing keep their place, then the biggest countries' capitals go first, so names don't flicker
+// as the globe turns; they fade in and out instead of popping.
+const spinWidths = new Map();
+function drawSpinFx(ctx, p, now) {
+	const dt = spin.fxLast ? Math.min(0.1, (now - spin.fxLast) / 1000) : 0;
+	spin.fxLast = now;
+	if (!labelFont) labelFont = getComputedStyle(document.body).fontFamily;
+	const size = layout.w < 600 ? 10 : 11.5, lh = size + 4;
+	ctx.font = `600 ${size}px ${labelFont}`;
+	const textW = (t) => {
+		const k = size + '|' + t;
+		if (!spinWidths.has(k)) spinWidths.set(k, ctx.measureText(t).width);
+		return spinWidths.get(k);
+	};
+	const ctr = [cam.lon, cam.lat], pts = [];
+	for (const c of COUNTRIES) {
+		if (c.fi == null) continue;
+		const d = geoDistance([c.lon, c.lat], ctr);
+		if (d > Math.PI / 2 - 0.02) continue;
+		const xy = p([c.lon, c.lat]);
+		if (!xy || !isFinite(xy[0])) continue;
+		pts.push({ c, x: xy[0], y: xy[1], face: Math.min(1, Math.max(0, (Math.cos(d) - 0.08) / 0.3)), area: META[c.fi].area });
+	}
+	// where the names go
+	const taken = pts.filter((q) => q.face > 0.3).map((q) => [q.x - 3.5, q.y - 3.5, q.x + 3.5, q.y + 3.5]);
+	const clear = (b) => b[0] > 4 && b[2] < layout.w - 4 && b[1] > 4 && b[3] < layout.h - 4 && !taken.some((t) => b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]);
+	const showing = (id) => (spin.labels.get(id) || { a: 0 }).a > 0.5;
+	pts.sort((a, b) => showing(b.c.id) - showing(a.c.id) || b.area - a.area);
+	const placed = new Map(); // id -> left
+	for (const q of pts) {
+		if (q.face < 0.45) continue;
+		const w = textW(q.c.capital), prev = spin.labels.get(q.c.id);
+		const right = [q.x + 6, q.y - lh / 2, q.x + 8 + w, q.y + lh / 2], left = [q.x - 8 - w, q.y - lh / 2, q.x - 6, q.y + lh / 2];
+		const order = prev && prev.left ? [[left, true], [right, false]] : [[right, false], [left, true]];
+		const ok = order.find(([b]) => clear(b));
+		if (!ok) continue;
+		taken.push(ok[0]);
+		placed.set(q.c.id, ok[1]);
+	}
+	// dots
+	ctx.lineWidth = 1.1;
+	for (const q of pts) {
+		ctx.globalAlpha = q.face;
+		ctx.beginPath();
+		ctx.arc(q.x, q.y, 2.4, 0, TAU);
+		ctx.fillStyle = COL.dot;
+		ctx.fill();
+		ctx.strokeStyle = COL.ring;
+		ctx.stroke();
+	}
+	// names, faded in and out
+	ctx.textBaseline = 'middle';
+	ctx.lineJoin = 'round';
+	for (const q of pts) {
+		const id = q.c.id, prev = spin.labels.get(id) || { a: 0, left: false };
+		const want = placed.has(id);
+		const a = prev.a + ((want ? 1 : 0) - prev.a) * Math.min(1, dt * 5);
+		const lab = { a, left: want ? placed.get(id) : prev.left };
+		if (a < 0.02) {
+			spin.labels.delete(id);
+			continue;
+		}
+		spin.labels.set(id, lab);
+		ctx.globalAlpha = a * q.face;
+		ctx.textAlign = lab.left ? 'right' : 'left';
+		const x = lab.left ? q.x - 7 : q.x + 7;
+		ctx.lineWidth = 3;
+		ctx.strokeStyle = COL.labelHalo;
+		ctx.strokeText(q.c.capital, x, q.y);
+		ctx.fillStyle = COL.ring;
+		ctx.fillText(q.c.capital, x, q.y);
+	}
+	// names whose capital went round the back
+	const front = new Set(pts.map((q) => q.c.id));
+	for (const id of spin.labels.keys()) if (!front.has(id)) spin.labels.delete(id);
+	ctx.globalAlpha = 1;
+	ctx.textAlign = 'left';
+}
+
 /* ---------------- keyboard ---------------- */
 document.addEventListener('keydown', (e) => {
 	if (pendingConfirm) {
@@ -2347,8 +2552,22 @@ document.addEventListener('keydown', (e) => {
 		return;
 	}
 	const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+	if (spin.on) {
+		// while the globe spins: S goes faster, Esc stops it, + and − zoom; nothing else
+		const f = free();
+		if (e.key === 'Escape') stopSpin();
+		else if ((e.key === 's' || e.key === 'S') && !e.metaKey && !e.ctrlKey && !e.altKey) spinKey();
+		else if (e.key === '+' || e.key === '=') zoomAround(f.cx, f.cy, 1.25);
+		else if (e.key === '-' || e.key === '_') zoomAround(f.cx, f.cy, 1 / 1.25);
+		else return;
+		e.preventDefault();
+		return;
+	}
 	if (e.key === 'Escape') {
+		// as in the 3D atlases: the first Esc clears what's selected, the next goes back to the region
 		if (document.body.classList.contains('sheet-open') || document.body.classList.contains('view-open')) setSheet(null);
+		else if (!typing && studySelected()) clearStudySelection();
+		else if (!typing && review && callout) setCallout(null);
 		else if (state.clean) setClean(false);
 		else if (!typing) frameRegion();
 		return;
@@ -2368,6 +2587,7 @@ document.addEventListener('keydown', (e) => {
 	else if (e.key === 'r' || e.key === 'R') frameRegion();
 	else if (e.key === 'l' || e.key === 'L') setNames(!state.names, true);
 	else if (e.key === 'i' || e.key === 'I') setPins(!state.pins); // the hidden Images mode (not listed in the key hints)
+	else if (e.key === 's' || e.key === 'S') spinKey(); // the hidden spinning globe (globe view only; not listed either)
 	else return;
 	e.preventDefault();
 });
