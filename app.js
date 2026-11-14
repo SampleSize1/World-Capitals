@@ -2307,7 +2307,8 @@ $('search').addEventListener('input', () => {
 		list.replaceChildren();
 		return;
 	}
-	const hits = COUNTRIES.filter((c) => [c.name, c.capital, ...(c.alts || [])].some((s) => norm(s).includes(q)))
+	// other names for a country count too ("turkey" finds Türkiye)
+	const hits = COUNTRIES.filter((c) => [c.name, c.capital, ...(c.alts || []), ...(COUNTRY_WORDS[c.id] || [])].some((s) => norm(s).includes(q)))
 		.sort((a, b) => Number(!norm(a.name).startsWith(q)) - Number(!norm(b.name).startsWith(q)) || a.name.localeCompare(b.name))
 		.slice(0, 12);
 	list.replaceChildren(
@@ -2652,7 +2653,7 @@ const COUNTRY_WORDS = {
 	ARE: ['uae', 'emirates'],
 	KOR: ['korea'],
 	RUS: ['russian federation'],
-	TUR: ['turkiye'],
+	TUR: ['turkey', 'turkiye'],
 	BIH: ['bosnia'],
 	TTO: ['trinidad'],
 	ATG: ['antigua'],
@@ -2683,7 +2684,7 @@ function buildVoice() {
 const VOICE_FILLER = new Set(['ok', 'okay', 'um', 'uh', 'so', 'now', 'and', 'hey', 'alright']);
 const VOICE_PREFIX = new Set(['zoom', 'in', 'on', 'to', 'into', 'onto', 'show', 'me', 'go', 'view', 'look', 'at', 'focus', 'the', 'take', 'switch', 'fly', 'move']);
 function parseVoice(raw) {
-	const w = String(raw).toLowerCase().replace(/[^a-z\s']/g, ' ').split(/\s+/).filter(Boolean);
+	const w = String(raw).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z\s']/g, ' ').split(/\s+/).filter(Boolean); // accents off first: "Türkiye"
 	while (w.length && VOICE_FILLER.has(w[0])) w.shift();
 	while (w.length && (w[w.length - 1] === 'please' || w[w.length - 1] === 'thanks')) w.pop();
 	if (!w.length) return null;

@@ -49,6 +49,7 @@ Then open http://localhost:8000.
 
 - **Code and capitals data**: MIT, see [LICENSE](LICENSE).
 - **Map**: [Natural Earth](https://www.naturalearthdata.com/) 1:10m country shapes, lakes and rivers, and 1:50m sea names, public domain.
+- **Borders** are drawn as the UN and most countries recognise them, not by who holds the ground: Crimea is part of Ukraine, the Golan Heights part of Syria, East Jerusalem part of Palestine, and Western Sahara is its own territory. Where no side is widely recognised (Kashmir, the Kuril Islands), the map follows who administers each part. The list and the reasons are at the top of `scripts/build-capital-atlas-map.mjs`.
 - **d3-geo, d3-array and topojson-client** by Mike Bostock: ISC, see the [licenses](licenses/) folder.
 
 ## Updates and feedback

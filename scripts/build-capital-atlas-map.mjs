@@ -3,8 +3,16 @@
 //
 // The site doesn't depend on these packages, so run it from a scratch folder:
 //   mkdir /tmp/ca && cd /tmp/ca && npm i topojson-server@3 topojson-simplify@3 topojson-client@3
-//   curl -LO https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson
+//   for f in countries countries_deu countries_pse; do
+//     curl -LO https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_$f.geojson
+//   done
 //   node /path/to/website/scripts/build-capital-atlas-map.mjs ne_10m_admin_0_countries.geojson /path/to/website/public/tools/capital-atlas/data
+//
+// Borders: Natural Earth's main file draws a disputed place under whoever holds the ground. This map
+// draws borders as the UN and most countries recognise them instead, so an annexation the UN calls
+// void isn't shown (see RECOGNISED below; the two extra files are Natural Earth's own editions that
+// draw those places that way). Where no side is widely recognised (Kashmir's line of control, the
+// Kuril Islands, the Hala'ib Triangle...) the main file's drawing stays.
 //
 // It writes four levels of detail so the map stays fast: map-xlow and map-low (whole
 // world), map-mid (a continent) and map-high (zoomed in: every island, full 10m detail).
@@ -20,6 +28,30 @@ const { quantize } = require('topojson-client');
 
 const [src, outDir] = process.argv.slice(2);
 const ne = JSON.parse(fs.readFileSync(src, 'utf8'));
+
+// Countries whose shape comes from another Natural Earth edition (the file beside the main one,
+// ending _<edition>.geojson), because the main file draws them by who holds the ground:
+// - deu: Crimea is part of Ukraine, not Russia (UN General Assembly resolution 68/262). Western
+//   Sahara is one territory, not split along Morocco's sand wall with the west drawn as Morocco
+//   (the UN lists it as a Non-Self-Governing Territory; no settlement has been reached).
+// - pse: the Golan Heights are part of Syria and East Jerusalem part of Palestine, not Israel
+//   (Security Council resolutions 497 and 478 call both annexations void); the Shebaa Farms go
+//   to Lebanon. Only these four shapes are taken from it.
+// Shapes merged the same way through data/countries.json ("shapes"): Northern Cyprus into Cyprus,
+// Somaliland into Somalia, and the leased areas Baikonur into Kazakhstan and Guantanamo Bay into Cuba.
+const RECOGNISED = [
+	{ edition: 'deu', take: ['RUS', 'UKR', 'MAR', 'SAH'] },
+	{ edition: 'pse', take: ['ISR', 'SYR', 'LBN', 'PSX'] },
+];
+for (const { edition, take } of RECOGNISED) {
+	const other = JSON.parse(fs.readFileSync(src.replace(/\.geojson$/, `_${edition}.geojson`), 'utf8'));
+	for (const a3 of take) {
+		const from = other.features.find((f) => f.properties.ADM0_A3 === a3);
+		const to = ne.features.find((f) => f.properties.ADM0_A3 === a3);
+		if (!from || !to) throw new Error(`No ${a3} in the ${edition} edition`);
+		to.geometry = from.geometry;
+	}
+}
 const countries = JSON.parse(fs.readFileSync(`${outDir}/countries.json`, 'utf8'));
 const quiz = new Set(countries.map((c) => c.id));
 const extraShapes = new Map(); // e.g. Somaliland is drawn as part of Somalia
